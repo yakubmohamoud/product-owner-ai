@@ -1,15 +1,46 @@
 # Product Owner AI
 
-Product Owner AI is a Chrome extension and Node.js API for consultancy Agile teams. It creates a product pack from meeting notes, documents, and connected project systems.
+Product Owner AI is a Node.js API and Chrome extension that helps Agile teams turn meeting notes, documents, and connected project tools into product plans and delivery artifacts.
 
-## Run locally
+## Run it locally
 
-1. Install Node.js 20 or later and run `npm ci`.
-2. Copy `.env.example` to `.env`. Set a private `APP_SECRET` (for example, generate one with `openssl rand -base64 48`) and add the service credentials you have configured.
-3. Run `npm start`. The account page is at `http://localhost:3000`.
-4. Open `chrome://extensions`, enable Developer mode, and load `extension/` as an unpacked extension.
+You only need Node.js 20 or later to start the app. You do **not** need API keys or OAuth credentials just to open it and try the local email/password sign-in.
 
-The API creates `.data/product-owner-ai.sqlite` and a development secret when run locally. Keep `.data` private and backed up. In production, set `NODE_ENV=production`, a unique `APP_SECRET`, an HTTPS `PUBLIC_BASE_URL`, the production OAuth callback URLs, and the exact Chrome extension origin in `EXTENSION_ORIGIN`. Do not expose this app publicly with an example or missing secret.
+1. Clone the repository and install its dependencies:
+
+   ```sh
+   git clone https://github.com/yakubmohamoud/product-owner-ai.git
+   cd product-owner-ai
+   npm ci
+   ```
+
+2. Start the API and web app:
+
+   ```sh
+   npm start
+   ```
+
+3. Open [http://localhost:3000](http://localhost:3000), create an account, and sign in. Stop the server with **Ctrl+C**.
+
+The first run creates a local SQLite database and a development encryption secret in `.data/`. Keep this folder if you want to retain your local account, data, and connected credentials; do not commit or share it.
+
+### Optional: connect AI and external tools
+
+AI generation and provider sign-in/integrations need credentials from those providers. For local development, copy `.env.example` to `.env` and fill in only the credentials for the integrations you want to try. For example, set `OPENAI_API_KEY` for managed AI, or register OAuth applications using the local callback URLs listed under [OAuth provider setup](#oauth-provider-setup). Restart the server after changing `.env`. Never commit `.env` or share provider secrets.
+
+### Optional: load the Chrome extension
+
+1. Open `chrome://extensions` in Chrome and turn on **Developer mode**.
+2. Choose **Load unpacked** and select the repository's `extension/` folder.
+
+The extension talks to the local API at `http://localhost:3000`. For production deployments, configure a unique `APP_SECRET`, an HTTPS `PUBLIC_BASE_URL`, provider callback URLs, and the exact extension origin in `EXTENSION_ORIGIN`; never expose a local development setup publicly.
+
+### Run checks
+
+```sh
+npm test
+npm run smoke
+```
 
 ## Git branches, QA, and pre-production
 
