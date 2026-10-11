@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Product Owner AI — Profile</title>
+  <style>
+    :root { color-scheme: light; font: 16px/1.5 system-ui, sans-serif; color: #172033; background: #f4f6fb; }
+    body { max-width: 980px; margin: 32px auto; padding: 0 18px; }
+    main, section { background: #fff; border: 1px solid #dfe5f2; border-radius: 14px; padding: 22px; margin-bottom: 18px; }
+    h1, h2 { margin-top: 0; }
+    .muted { color: #596579; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; }
+    .credential-card { border: 1px solid #dfe5f2; border-radius: 12px; padding: 16px; background: #fbfcff; }
+    label { display: block; margin-bottom: 8px; font-size: 0.94rem; font-weight: 600; }
+    input, textarea, select, button { width: 100%; box-sizing: border-box; margin-bottom: 10px; font: inherit; }
+    input, textarea, select { border: 1px solid #cfd9ef; border-radius: 8px; padding: 10px 12px; background: white; }
+    textarea { min-height: 110px; resize: vertical; }
+    button { background: #245eea; color: white; border: 0; border-radius: 8px; padding: 10px 14px; cursor: pointer; }
+    button.secondary { background: #e7eaf1; color: #202b40; }
+    button.danger { background: #d92d20; color: white; }
+    a.button-link { display: inline-block; text-decoration: none; color: #202b40; background: #e7eaf1; border-radius: 8px; padding: 10px 14px; margin-right: 8px; }
+    .status { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Profile & integrations</h1>
+    <p id="status" class="status muted">Checking your account…</p>
+    <div id="loggedOut" hidden>
+      <p>You need to sign in before you can manage your profile.</p>
+      <a class="button-link" href="/">Back to sign in</a>
+    </div>
+    <div id="loggedIn" hidden>
+      <p>Signed in as <strong id="accountName"></strong> (<span id="accountEmail"></span>)</p>
+      <p class="muted">Save credentials for Jira, OpenAI, Gemini, Microsoft Copilot, Figma, and Google Drive so they are available in your workspace profile.</p>
+      <a class="button-link" href="/">Back to workspace</a>
+    </div>
+  </main>
+
+  <section id="credentialsSection" hidden>
+    <h2>External credentials</h2>
+    <div id="credentialForms" class="grid"></div>
+  </section>
+
+  <script src="/profile.js" defer></script>
+</body>
+</html>

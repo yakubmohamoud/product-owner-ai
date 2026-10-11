@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Product Owner AI</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <main class="container">
+    <h1>Product Owner AI</h1>
+
+    <section id="accountPanel" class="section-card">
+      <h3>Account and workspace</h3>
+      <p id="authStatus">Checking sign-in...</p>
+      <div id="signInActions">
+        <a id="googleLogin" class="button-link" target="_blank" rel="noopener">Sign in with Google</a>
+        <a id="atlassianLogin" class="button-link secondary-link" target="_blank" rel="noopener">Sign in with Atlassian</a>
+      </div>
+      <div id="signedInActions" class="hidden">
+        <p><strong id="accountName"></strong> · <span id="accountEmail"></span></p>
+        <p>Workspace: <strong id="workspaceName"></strong> · Plan: <span id="planName"></span> · AI units this month: <span id="usageCount"></span></p>
+        <label for="workspaceSelect">Switch workspace</label>
+        <select id="workspaceSelect"></select>
+        <div class="button-row">
+          <a id="googleConnect" class="button-link" target="_blank" rel="noopener">Connect Google Drive</a>
+          <a id="atlassianConnect" class="button-link secondary-link" target="_blank" rel="noopener">Connect Jira / Confluence</a>
+          <a id="slackConnect" class="button-link secondary-link" target="_blank" rel="noopener">Connect Slack</a>
+          <a id="zoomConnect" class="button-link secondary-link" target="_blank" rel="noopener">Connect Zoom</a>
+          <a id="teamsConnect" class="button-link secondary-link" target="_blank" rel="noopener">Connect Microsoft Teams</a>
+        </div>
+        <div class="button-row">
+          <button id="teamPlanBtn">Team plan</button>
+          <button id="businessPlanBtn">Business plan</button>
+          <button id="paygPlanBtn" class="secondary">Pay as you go</button>
+        </div>
+        <button id="billingPortalBtn" class="secondary">Manage billing</button>
+        <label for="newWorkspaceName">Create a work or personal workspace</label>
+        <input id="newWorkspaceName" type="text" placeholder="e.g. Acme Consulting" />
+        <button id="createWorkspaceBtn">Create workspace</button>
+        <label for="inviteEmail">Invite teammate (optional email restriction)</label>
+        <input id="inviteEmail" type="email" placeholder="teammate@company.com" />
+        <button id="inviteBtn" class="secondary">Create invite link</button>
+        <div id="inviteOutput" class="preformatted"></div>
+        <label for="invitationToken">Accept a workspace invite</label>
+        <input id="invitationToken" type="text" placeholder="Paste invitation token" />
+        <button id="acceptInviteBtn" class="secondary">Join workspace</button>
+        <div id="integrationStatus" class="preformatted"></div>
+        <button id="logoutBtn" class="secondary">Sign out</button>
+      </div>
+    </section>
+
+    <section id="projectPanel" class="section-card hidden">
+      <h3>Projects and company context</h3>
+      <label for="projectSelect">Project</label>
+      <select id="projectSelect">
+        <option value="">No project selected</option>
+      </select>
+      <label for="newProjectName">Save current notes as a project</label>
+      <input id="newProjectName" type="text" placeholder="Project name" />
+      <button id="createProjectBtn">Create project from notes</button>
+      <div id="storedContext" class="preformatted"></div>
+      <label for="driveSearch">Import a Google Drive document</label>
+      <input id="driveSearch" type="text" placeholder="Search Drive file names" />
+      <button id="driveSearchBtn" class="secondary">Search Google Drive</button>
+      <ul id="driveFiles"></ul>
+      <label for="jiraSite">Jira / Confluence site</label>
+      <select id="jiraSite"></select>
+      <button id="jiraRefreshBtn" class="secondary">Refresh Jira issues</button>
+      <ul id="jiraIssues"></ul>
+      <label for="confluenceSearch">Confluence search</label>
+      <input id="confluenceSearch" type="text" placeholder="Search project knowledge" />
+      <button id="confluenceSearchBtn" class="secondary">Search Confluence</button>
+      <ul id="confluenceResults"></ul>
+      <label for="zoomFrom">Import Zoom meeting transcripts</label>
+      <div class="button-row">
+        <input id="zoomFrom" type="date" />
+        <input id="zoomTo" type="date" />
+      </div>
+      <button id="zoomSearchBtn" class="secondary">Find Zoom transcripts</button>
+      <ul id="zoomRecordings"></ul>
+      <label for="teamsMeetingId">Import a Teams transcript by meeting ID</label>
+      <input id="teamsMeetingId" type="text" placeholder="Online meeting ID" />
+      <button id="teamsTranscriptSearchBtn" class="secondary">Find Teams transcripts</button>
+      <ul id="teamsTranscripts"></ul>
+      <label>Daily Slack stand-up notifications</label>
+      <button id="loadSlackMembersBtn" class="secondary">Load Slack team members</button>
+      <select id="slackMembers" multiple size="6" aria-label="Slack members for daily stand-up"></select>
+      <label for="standupSendTime">Daily notification time (24-hour)</label>
+      <input id="standupSendTime" type="time" value="09:00" />
+      <label for="standupTimezone">Timezone (IANA)</label>
+      <input id="standupTimezone" type="text" />
+      <label for="standupJiraIssue">Optional Jira issue for automatic replies</label>
+      <input id="standupJiraIssue" type="text" placeholder="PROJ-123" />
+      <button id="saveStandupScheduleBtn">Schedule daily Slack check-ins</button>
+      <div id="standupScheduleStatus" class="preformatted"></div>
+    </section>
+
+    <label for="inputText">Paste project documentation or a meeting transcript</label>
+    <textarea id="inputText" rows="12" placeholder="Paste notes, decisions, requirements, or a meeting transcript..."></textarea>
+    <label for="documentUpload">Add text documents or exported transcripts</label>
+    <input id="documentUpload" type="file" accept=".txt,.md,.csv,.json,.log,.vtt,.srt,.pdf,.docx,.xlsx" multiple />
+    <label for="apiKey">Your OpenAI API key (optional; used for this request only)</label>
+    <input id="apiKey" type="password" autocomplete="off" placeholder="sk-..." />
+
+    <div class="button-row">
+      <button id="generateBtn">Generate project pack</button>
+      <button id="exportBtn" class="secondary">Export Excel</button>
+    </div>
+
+    <section id="statusBox" class="status-box hidden"></section>
+
+    <section id="result" class="result-area hidden">
+      <div class="section-card">
+        <h3 id="projectName"></h3>
+        <p id="projectSummary"></p>
+        <p><strong>Current phase:</strong> <span id="projectPhase"></span></p>
+        <p id="productUpdate"></p>
+      </div>
+
+      <div class="section-card">
+        <h3>User Stories</h3>
+        <ul id="storyList"></ul>
+      </div>
+
+      <div class="section-card">
+        <h3>UML Diagram</h3>
+        <pre id="umlOutput"></pre>
+      </div>
+
+      <div class="section-card">
+        <h3>Test Cases</h3>
+        <ul id="testList"></ul>
+      </div>
+
+      <div class="section-card">
+        <h3>Business Requirements Document</h3>
+        <pre id="brdOutput"></pre>
+      </div>
+
+      <div class="section-card">
+        <h3>Product Owner Documentation</h3>
+        <pre id="productDocsOutput"></pre>
+      </div>
+
+      <div class="section-card">
+        <h3>SAFe Planning Artifacts</h3>
+        <ul id="safeArtifacts"></ul>
+      </div>
+
+      <div class="section-card">
+        <h3>Technical Notes</h3>
+        <ul id="technicalNotes"></ul>
+      </div>
+
+      <div class="section-card">
+        <h3>Roadmap</h3>
+        <ul id="roadmapList"></ul>
+      </div>
+
+      <div class="section-card">
+        <h3>Risks</h3>
+        <ul id="riskList"></ul>
+      </div>
+
+      <div class="section-card">
+        <h3>Ask about this project</h3>
+        <label for="questionInput">Question</label>
+        <textarea id="questionInput" rows="3" placeholder="What phase is the project in? What is blocked?"></textarea>
+        <button id="askBtn">Ask product agent</button>
+        <div id="answerOutput" class="preformatted"></div>
+      </div>
+
+      <div class="section-card">
+        <h3>Meeting agenda draft</h3>
+        <label for="agendaTrigger">Why is a meeting needed?</label>
+        <select id="agendaTrigger">
+          <option value="open_question">Open question in project notes</option>
+          <option value="inconclusive_meeting">Previous meeting was inconclusive</option>
+          <option value="stale_story">Story has been open too long</option>
+        </select>
+        <button id="agendaBtn">Draft agenda</button>
+        <div id="agendaOutput" class="preformatted"></div>
+        <label for="meetingStart">Schedule the reviewed agenda</label>
+        <input id="meetingStart" type="datetime-local" />
+        <label for="meetingEnd">End time</label>
+        <input id="meetingEnd" type="datetime-local" />
+        <label for="meetingAttendees">Attendee emails (comma separated)</label>
+        <input id="meetingAttendees" type="text" placeholder="person@company.com" />
+        <div class="button-row">
+          <button id="googleMeetingBtn">Create Google Meet</button>
+          <button id="teamsMeetingBtn" class="secondary">Create Teams meeting</button>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <h3>Daily stand-up update</h3>
+        <label for="standupMember">Team member</label>
+        <input id="standupMember" type="text" placeholder="Name" />
+        <label for="standupYesterday">Yesterday</label>
+        <input id="standupYesterday" type="text" placeholder="What did you complete?" />
+        <label for="standupToday">Today</label>
+        <input id="standupToday" type="text" placeholder="What will you work on?" />
+        <label for="standupBlockers">Blockers</label>
+        <input id="standupBlockers" type="text" placeholder="Blockers, or None" />
+        <button id="standupBtn">Draft stand-up update</button>
+        <div id="standupOutput" class="preformatted"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>

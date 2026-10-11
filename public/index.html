@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Product Owner AI — Account</title>
+  <style>
+    :root { color-scheme: light; font: 16px/1.5 system-ui, sans-serif; color: #172033; background: #f4f6fb; }
+    body { max-width: 760px; margin: 36px auto; padding: 0 18px; }
+    main, section { padding: 22px; border: 1px solid #dce1eb; border-radius: 14px; background: white; }
+    section { margin-top: 16px; }
+    button, a.button { display: inline-block; margin: 4px; padding: 10px 14px; border: 0; border-radius: 8px; background: #245eea; color: white; font: inherit; text-decoration: none; cursor: pointer; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .secondary { background: #e7eaf1; color: #202b40; }
+    .muted { color: #596579; }
+    #message { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Product Owner AI</h1>
+    <p class="muted">Sign in with Google, Atlassian, or email/password. Each account starts with its own private workspace.</p>
+    <p id="message">Checking API and account status…</p>
+    <div id="login">
+      <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px;">
+        <a id="googleLogin" class="button" href="/auth/google/start">Sign in with Google</a>
+        <a id="atlassianLogin" class="button secondary" href="/auth/atlassian/start">Sign in with Atlassian</a>
+      </div>
+
+      <h2>Use email and password</h2>
+      <form id="loginForm" style="display:grid; gap:10px; max-width: 360px;">
+        <input id="loginEmail" type="email" placeholder="Email address" required />
+        <input id="loginPassword" type="password" placeholder="Password" required />
+        <button type="submit">Sign in</button>
+      </form>
+
+      <h2 style="margin-top:22px;">Create an account</h2>
+      <form id="registerForm" style="display:grid; gap:10px; max-width: 360px;">
+        <input id="registerName" type="text" placeholder="Full name" required />
+        <input id="registerEmail" type="email" placeholder="Email address" required />
+        <input id="registerPassword" type="password" placeholder="Password (8+ chars)" required />
+        <button type="submit" class="secondary">Create account</button>
+      </form>
+    </div>
+    <div id="account" hidden>
+      <p>Signed in as <strong id="accountName"></strong> (<span id="accountEmail"></span>)</p>
+      <p>Workspace: <strong id="workspace"></strong> · Subscription: <span id="plan"></span> · AI billing: <span id="billingModeSummary"></span> · LLM tokens this month: <span id="usage"></span></p>
+      <div style="display:flex; flex-wrap:wrap; gap:8px; margin:10px 0 16px;">
+        <button id="googleDrive">Connect Google Drive</button>
+        <button id="jira" class="secondary">Connect Jira / Confluence</button>
+        <button id="slack" class="secondary">Connect Slack</button>
+        <button id="zoom" class="secondary">Connect Zoom</button>
+        <button id="teams" class="secondary">Connect Microsoft Teams</button>
+      </div>
+      <a href="/profile.html" class="button secondary">Open profile settings</a>
+      <button id="manageBilling" class="secondary">Manage billing</button>
+      <section id="billingControls" hidden>
+        <h2>AI billing</h2>
+        <p>Mode: <strong id="billingMode"></strong> · Available credits: <span id="creditBalance"></span> USD</p>
+        <button id="byokPlan" class="secondary" disabled>Subscribe to BYOK platform plan</button>
+        <button id="managedCredits" disabled>Buy managed API credits</button>
+        <label for="billingModeSelect">Active billing path</label>
+        <select id="billingModeSelect">
+          <option value="managed">Managed API credits</option>
+          <option value="byok">BYOK monthly platform fee</option>
+        </select>
+        <button id="saveBillingMode" class="secondary">Save billing path</button>
+      </section>
+      <section id="organizationRoles" hidden>
+        <h2>Organization roles</h2>
+        <p class="muted">Company Admins can assign roles. Scrum Masters can manage stand-ups; Heads of Product can review generation usage.</p>
+        <div id="organizationMembers"></div>
+      </section>
+      <button id="logout" class="secondary">Sign out</button>
+    </div>
+  </main>
+  <section>
+    <h2>Workspace plans</h2>
+    <p class="muted">Choose a flat monthly BYOK platform subscription or managed API credits, which are charged from exact token usage plus the configured markup.</p>
+    <button id="byok" disabled>Subscribe to BYOK</button>
+    <button id="credits" disabled>Buy managed API credits</button>
+  </section>
+  <script src="/account.js" defer></script>
+</body>
+</html>

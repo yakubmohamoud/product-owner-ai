@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Product Owner AI",
+  "version": "1.0.0",
+  "description": "Generate user stories, UML diagrams, and test scripts from docs or meeting transcripts.",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "http://localhost:3000/*"
+  ],
+  "action": {
+    "default_title": "Product Owner AI",
+    "default_popup": "popup.html"
+  }
+}
