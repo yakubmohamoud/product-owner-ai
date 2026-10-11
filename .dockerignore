@@ -1,0 +1,9 @@
+.git
+.github
+.data
+.env*
+node_modules
+tests
+extension
+app
+npm-debug.log*

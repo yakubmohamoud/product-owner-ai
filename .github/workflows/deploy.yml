@@ -1,0 +1,88 @@
+name: Deploy QA and pre-production
+
+on:
+  push:
+    branches:
+      - qa
+      - pre-production
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check JavaScript syntax
+        run: npm run smoke
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build production container
+        run: docker build --tag product-owner-ai:${{ github.sha }} .
+
+  deploy:
+    name: Deploy ${{ github.ref_name }}
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ github.ref_name == 'pre-production' && 'pre-production' || 'qa' }}
+    steps:
+      - name: Validate deployment configuration
+        env:
+          DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
+          HEALTHCHECK_URL: ${{ vars.HEALTHCHECK_URL }}
+        run: |
+          if [[ -z "${DEPLOY_HOOK_URL:-}" ]]; then
+            echo "::error::Configure the DEPLOY_HOOK_URL secret in this GitHub Environment."
+            exit 1
+          fi
+          if [[ -z "${HEALTHCHECK_URL:-}" ]]; then
+            echo "::error::Configure the HEALTHCHECK_URL variable in this GitHub Environment."
+            exit 1
+          fi
+          if [[ "$HEALTHCHECK_URL" != https://* ]]; then
+            echo "::error::HEALTHCHECK_URL must use HTTPS."
+            exit 1
+          fi
+
+      - name: Trigger deployment
+        env:
+          DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
+        run: curl --output /dev/null --fail --silent --show-error --max-time 30 --request POST "$DEPLOY_HOOK_URL"
+
+      - name: Wait for application health
+        env:
+          HEALTHCHECK_URL: ${{ vars.HEALTHCHECK_URL }}
+        run: |
+          for attempt in {1..30}; do
+            response="$(curl --fail --silent --show-error --max-time 10 "$HEALTHCHECK_URL")" || response=""
+            if [[ "$response" == *'"status":"ok"'* ]]; then
+              echo "Environment is healthy."
+              exit 0
+            fi
+            echo "Waiting for environment health check (attempt $attempt/30)."
+            sleep 10
+          done
+          echo "::error::The environment did not pass its health check."
+          exit 1

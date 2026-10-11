@@ -11,6 +11,23 @@ Product Owner AI is a Chrome extension and Node.js API for consultancy Agile tea
 
 The API creates `.data/product-owner-ai.sqlite` and a development secret when run locally. Keep `.data` private and backed up. In production, set `NODE_ENV=production`, a unique `APP_SECRET`, an HTTPS `PUBLIC_BASE_URL`, the production OAuth callback URLs, and the exact Chrome extension origin in `EXTENSION_ORIGIN`. Do not expose this app publicly with an example or missing secret.
 
+## Git branches, QA, and pre-production
+
+The repository uses this promotion path:
+
+1. Open feature pull requests into `qa`. Merges to `qa` run CI and automatically trigger the QA deployment.
+2. When QA is accepted, open a pull request from `qa` into `pre-production`. Merges run CI; the deployment pauses for the required pre-production environment approval, then deploys and checks `/api/health`.
+3. After pre-production sign-off, open a pull request from `pre-production` into `main`. CI runs on `main`; production deployment should be a separately reviewed release step.
+
+GitHub Actions runs `npm ci`, `npm run smoke`, `npm test`, and a production Docker build for pull requests and branch updates. The deploy workflow uses deployment hooks so the repository does not assume a cloud vendor:
+
+- Create GitHub Environments named exactly `qa` and `pre-production` in **Settings → Environments**.
+- In each environment, add a `DEPLOY_HOOK_URL` secret for the host's deployment hook and a `HEALTHCHECK_URL` variable containing the deployed HTTPS health endpoint, for example `https://qa.example.com/api/health`. Configure each host hook to deploy its matching branch (`qa` or `pre-production`).
+- Add required reviewers to the `pre-production` environment before using it; GitHub holds that deployment until an authorized reviewer approves it. Protect `main`, `qa`, and `pre-production` with pull requests and require the CI `Test and build` status check.
+- Configure runtime credentials, OAuth callback URLs, `APP_SECRET`, Stripe secrets, and separate persistent database/storage resources in the hosting provider's secret manager. Do not put application secrets in GitHub variables, source, or workflow files.
+
+This is an application deployment hook, not a hosting account: a hosting provider and two configured deployments are required. The pre-production app must use its own database and test credentials; do not point it at production data.
+
 ## Authentication and workspaces
 
 - Google OpenID Connect sign-in supports personal and work Google accounts, subject to Google consent-screen policy. Atlassian sign-in uses the user's Atlassian Cloud account and requires the `read:me` scope. These identity providers create private workspaces.
