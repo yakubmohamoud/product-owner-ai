@@ -175,15 +175,6 @@ async function start() {
     document.getElementById('jira').onclick = () => {
       location.href = '/auth/atlassian/start?flow=connect';
     };
-    document.getElementById('slack').onclick = () => {
-      location.href = '/auth/slack/start?flow=connect';
-    };
-    document.getElementById('zoom').onclick = () => {
-      location.href = '/auth/zoom/start?flow=connect';
-    };
-    document.getElementById('teams').onclick = () => {
-      location.href = '/auth/microsoft/start?flow=connect';
-    };
     document.getElementById('manageBilling').onclick = async () => {
       try {
         location.href = (await request('/api/billing/portal', 'POST', {})).url;

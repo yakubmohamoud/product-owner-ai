@@ -97,9 +97,6 @@ async function loadAccount() {
     document.getElementById('atlassianLogin').onclick = () => openAuth('atlassian', 'login');
     document.getElementById('googleConnect').onclick = () => openAuth('google', 'connect');
     document.getElementById('atlassianConnect').onclick = () => openAuth('atlassian', 'connect');
-    document.getElementById('slackConnect').onclick = () => openAuth('slack', 'connect');
-    document.getElementById('zoomConnect').onclick = () => openAuth('zoom', 'connect');
-    document.getElementById('teamsConnect').onclick = () => openAuth('microsoft', 'connect');
     document.getElementById('googleLogin').classList.toggle('disabled-link', !configured.google);
     document.getElementById('atlassianLogin').classList.toggle('disabled-link', !configured.atlassian);
 
@@ -120,9 +117,6 @@ async function loadAccount() {
       : 'No external workspaces are connected yet.';
     document.getElementById('googleConnect').classList.toggle('disabled-link', !configured.google);
     document.getElementById('atlassianConnect').classList.toggle('disabled-link', !configured.atlassian);
-    document.getElementById('slackConnect').classList.toggle('disabled-link', !configured.slack);
-    document.getElementById('zoomConnect').classList.toggle('disabled-link', !configured.zoom);
-    document.getElementById('teamsConnect').classList.toggle('disabled-link', !configured.microsoft);
     await Promise.all([loadWorkspaces(), loadProjects()]);
     if (integrationProviders.has('atlassian')) await loadJiraSites();
   } catch (error) {
