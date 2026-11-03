@@ -19,10 +19,10 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@e965/xlsx": "^0.20.3",
     "better-sqlite3": "^12.11.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.1",
-    "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "ffmpeg-static": "^5.2.0",
     "google-auth-library": "^10.9.1",

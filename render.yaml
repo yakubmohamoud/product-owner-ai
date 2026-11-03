@@ -39,8 +39,6 @@ services:
         sync: false
       - key: STRIPE_PRICE_BYOK
         sync: false
-      - key: STRIPE_PRICE_MANAGED_CREDITS
-        sync: false
       - key: STRIPE_PRICE_TEAM
         sync: false
       - key: STRIPE_PRICE_BUSINESS

@@ -1,5 +1,5 @@
 const path = require('node:path');
-const ExcelJS = require('exceljs');
+const XLSX = require('@e965/xlsx');
 const mammoth = require('mammoth');
 const { PDFParse } = require('pdf-parse');
 const { maximumDocumentBytes } = require('./projectService');
@@ -72,17 +72,10 @@ async function extractText(name, input) {
       const result = await mammoth.extractRawText({ buffer: input });
       text = result.value;
     } else {
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.load(input);
-      text = workbook.worksheets.map((worksheet) => {
-        const rows = [];
-        worksheet.eachRow((row) => {
-          rows.push(row.values.slice(1).map((cell) => {
-            if (cell && typeof cell === 'object') return cell.text || cell.result || '';
-            return cell ?? '';
-          }).join('\t'));
-        });
-        return `${worksheet.name}\n${rows.join('\n')}`;
+      const workbook = XLSX.read(input, { type: 'buffer' });
+      text = workbook.SheetNames.map((sheetName) => {
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '', raw: false });
+        return `${sheetName}\n${rows.map((row) => row.join('\t')).join('\n')}`;
       }).join('\n\n');
     }
   } else {

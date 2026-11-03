@@ -2,7 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const ExcelJS = require('exceljs');
+const XLSX = require('@e965/xlsx');
 const crypto = require('node:crypto');
 const path = require('node:path');
 const fs = require('node:fs/promises');
@@ -1265,9 +1265,7 @@ app.post('/api/export-excel', requireAuthentication, requireCsrf, async (req, re
         : '')
     }));
 
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('User Stories');
-    worksheet.columns = Object.keys(rows[0] || {
+    const headers = Object.keys(rows[0] || {
       ID: 0,
       Title: '',
       'As a': '',
@@ -1276,9 +1274,15 @@ app.post('/api/export-excel', requireAuthentication, requireCsrf, async (req, re
       Priority: '',
       Labels: '',
       'Acceptance criteria': ''
-    }).map((header) => ({ header, key: header, width: Math.min(60, Math.max(14, header.length + 4)) }));
-    worksheet.addRows(rows);
-    const buffer = await workbook.xlsx.writeBuffer();
+    });
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      headers,
+      ...rows.map((row) => headers.map((header) => row[header]))
+    ]);
+    worksheet['!cols'] = headers.map((header) => ({ wch: Math.min(60, Math.max(14, header.length + 4)) }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'User Stories');
+    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 
     res.setHeader('Content-Disposition', 'attachment; filename=product-owner-ai-backlog.xlsx');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

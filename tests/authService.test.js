@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const ExcelJS = require('exceljs');
+const XLSX = require('@e965/xlsx');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -184,9 +184,11 @@ test('document ingestion validates supported formats and rejects malformed offic
 });
 
 test('document ingestion extracts supported PDF, DOCX, and XLSX content', async () => {
-  const workbook = new ExcelJS.Workbook();
-  workbook.addWorksheet('Stories').addRow(['Story', 'As a user I can sign in']);
-  const xlsx = Buffer.from(await workbook.xlsx.writeBuffer());
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ['Story', 'As a user I can sign in']
+  ]), 'Stories');
+  const xlsx = Buffer.from(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }));
   assert.match(await documents.extractText('stories.xlsx', xlsx), /As a user I can sign in/);
 
   const docx = Buffer.from(
