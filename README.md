@@ -83,7 +83,7 @@ Callback URLs must use the same scheme, host, port, and path configured in the p
 
 - Product, Engineering, QA, and Delivery/Risk agents generate stories, acceptance criteria, SAFe planning proposals, BRD/PO documentation, Mermaid source, test cases, roadmap, risks, and project status.
 - Workspace sign-in supports Google and Atlassian OAuth plus local email/password registration and sign-in for teams that prefer direct credentials.
-- Users can manage external provider credentials for Jira, OpenAI, Gemini, Microsoft Copilot, Figma, and Google Drive from the profile page, with those secret values encrypted before storage.
+- Users can manage their own BYOK OpenAI, Gemini, Microsoft Copilot, and Figma credentials from the profile page; secret values are encrypted before storage. Jira and Confluence use workspace OAuth rather than personal API keys.
 - Projects and uploaded text/transcript documents persist inside a workspace; their content and generated packs are encrypted at rest. Uploads support text, Markdown, CSV, JSON, logs, VTT, SRT, PDF, DOCX, and XLSX, up to 2 MB per file; PDF uploads are limited to 150 pages, Office archives are screened against excessive expansion, and scanned PDFs require OCR before upload.
 - Jira issue search, Confluence search, Jira comments, and Google Drive text/Google Docs import use workspace-scoped OAuth connections. A Jira comment from the extension requires a deliberate click and confirmation.
 - Zoom cloud transcript and Teams transcript import are available when provider scopes allow them. Teams transcript import currently requires the online-meeting ID to be supplied.

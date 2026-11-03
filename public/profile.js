@@ -7,15 +7,6 @@ let csrf = '';
 
 const providers = [
   {
-    key: 'jira',
-    label: 'Jira',
-    fields: [
-      { name: 'site_url', label: 'Jira site URL' },
-      { name: 'email', label: 'Email or username' },
-      { name: 'api_token', label: 'API token or PAT', type: 'password' }
-    ]
-  },
-  {
     key: 'openai',
     label: 'OpenAI',
     fields: [
@@ -161,6 +152,11 @@ function buildCredentialFields(provider, storedValues = {}, configuredSecretFiel
 
 async function loadProfile() {
   try {
+    const providersResponse = await fetch('/api/auth/providers', { credentials: 'include' });
+    if (providersResponse.ok) {
+      const providerConfig = await providersResponse.json();
+      document.getElementById('connectAtlassian').hidden = !providerConfig.atlassian;
+    }
     const account = await request('/api/auth/me');
     csrf = account.csrf_token || '';
     document.getElementById('accountName').textContent = account.user.name;

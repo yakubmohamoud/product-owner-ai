@@ -4,80 +4,35 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <title>Product Owner AI — Account</title>
+  <title>Product Owner AI</title>
   <style>
-    :root { color-scheme: light; font: 16px/1.5 system-ui, sans-serif; color: #172033; background: #f4f6fb; }
-    body { max-width: 760px; margin: 36px auto; padding: 0 18px; }
-    main, section { padding: 22px; border: 1px solid #dce1eb; border-radius: 14px; background: white; }
-    section { margin-top: 16px; }
-    button, a.button { display: inline-block; margin: 4px; padding: 10px 14px; border: 0; border-radius: 8px; background: #245eea; color: white; font: inherit; text-decoration: none; cursor: pointer; }
-    button:disabled { opacity: .45; cursor: not-allowed; }
-    .secondary { background: #e7eaf1; color: #202b40; }
-    .muted { color: #596579; }
-    #message { white-space: pre-wrap; }
+    :root{color-scheme:light;font:15px/1.45 Inter,system-ui,sans-serif;color:#172033;background:#f2f5f9}
+    *{box-sizing:border-box}body{margin:0}.shell{max-width:980px;margin:0 auto;padding:28px}.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}.brand{font-size:21px;font-weight:760}.badge{font-size:12px;color:#516078;background:#e7ebf2;padding:5px 9px;border-radius:999px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.card{background:#fff;border:1px solid #dde3ec;border-radius:14px;padding:18px;box-shadow:0 2px 8px rgba(23,32,51,.04)}.wide{grid-column:1/-1}h1,h2,h3{margin-top:0}h2{font-size:17px;margin-bottom:8px}.muted{color:#647087}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}input,select{width:100%;border:1px solid #cbd3df;border-radius:8px;padding:10px;font:inherit;background:white}.field{display:grid;gap:6px;margin:10px 0}.row input{flex:1;min-width:150px}button,a.button{border:0;border-radius:8px;padding:10px 13px;background:#245eea;color:white;font:inherit;font-weight:650;text-decoration:none;cursor:pointer;display:inline-block}button.secondary,a.secondary{background:#edf1f7;color:#26334a}button:disabled{opacity:.45;cursor:not-allowed}.danger{background:#fff;color:#b42318;border:1px solid #fecaca}.status{min-height:24px;margin:12px 0;color:#647087;white-space:pre-wrap}.estimate{background:#f6f8fc;border-radius:10px;padding:12px;margin-top:10px}.estimate strong{color:#245eea}.auth-grid{max-width:520px;margin:10vh auto}.oauth{display:grid;gap:8px;margin-bottom:18px}.auth-grid form{display:grid;gap:10px;margin-top:12px}[hidden]{display:none!important}@media(max-width:680px){.shell{padding:16px}.grid{grid-template-columns:1fr}.wide{grid-column:auto}.auth-grid{margin-top:24px}.topbar{align-items:flex-start}}
   </style>
 </head>
 <body>
-  <main>
-    <h1>Product Owner AI</h1>
-    <p class="muted">Sign in with Google, Atlassian, or email/password. Each account starts with its own private workspace.</p>
-    <p id="message">Checking API and account status…</p>
-    <div id="login">
-      <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px;">
-        <a id="googleLogin" class="button" href="/auth/google/start">Sign in with Google</a>
-        <a id="atlassianLogin" class="button secondary" href="/auth/atlassian/start">Sign in with Atlassian</a>
-      </div>
-
-      <h2>Use email and password</h2>
-      <form id="loginForm" style="display:grid; gap:10px; max-width: 360px;">
-        <input id="loginEmail" type="email" placeholder="Email address" required />
-        <input id="loginPassword" type="password" placeholder="Password" required />
-        <button type="submit">Sign in</button>
-      </form>
-
-      <h2 style="margin-top:22px;">Create an account</h2>
-      <form id="registerForm" style="display:grid; gap:10px; max-width: 360px;">
-        <input id="registerName" type="text" placeholder="Full name" required />
-        <input id="registerEmail" type="email" placeholder="Email address" required />
-        <input id="registerPassword" type="password" placeholder="Password (8+ chars)" required />
-        <button type="submit" class="secondary">Create account</button>
-      </form>
-    </div>
-    <div id="account" hidden>
-      <p>Signed in as <strong id="accountName"></strong> (<span id="accountEmail"></span>)</p>
-      <p>Workspace: <strong id="workspace"></strong> · Subscription: <span id="plan"></span> · AI billing: <span id="billingModeSummary"></span> · LLM tokens this month: <span id="usage"></span></p>
-      <div style="display:flex; flex-wrap:wrap; gap:8px; margin:10px 0 16px;">
-        <button id="googleDrive">Connect Google Drive</button>
-        <button id="jira" class="secondary">Connect Jira / Confluence</button>
-      </div>
-      <a href="/profile.html" class="button secondary">Open profile settings</a>
-      <button id="manageBilling" class="secondary">Manage billing</button>
-      <section id="billingControls" hidden>
-        <h2>AI billing</h2>
-        <p>Mode: <strong id="billingMode"></strong> · Available credits: <span id="creditBalance"></span> USD</p>
-        <button id="byokPlan" class="secondary" disabled>Subscribe to BYOK platform plan</button>
-        <button id="managedCredits" disabled>Buy managed API credits</button>
-        <label for="billingModeSelect">Active billing path</label>
-        <select id="billingModeSelect">
-          <option value="managed">Managed API credits</option>
-          <option value="byok">BYOK monthly platform fee</option>
-        </select>
-        <button id="saveBillingMode" class="secondary">Save billing path</button>
-      </section>
-      <section id="organizationRoles" hidden>
-        <h2>Organization roles</h2>
-        <p class="muted">Company Admins can assign roles. Scrum Masters can manage stand-ups; Heads of Product can review generation usage.</p>
-        <div id="organizationMembers"></div>
-      </section>
-      <button id="logout" class="secondary">Sign out</button>
+<div class="shell">
+  <header class="topbar"><div><div class="brand">Product Owner AI</div><div class="badge">Chrome workspace</div></div><button id="logout" class="secondary" hidden>Sign out</button></header>
+  <p id="message" class="status">Checking workspace…</p>
+  <main id="login" class="card auth-grid">
+    <h1>Welcome</h1><p class="muted">Sign in to your private workspace.</p>
+    <div class="oauth"><a id="googleLogin" class="button" href="/auth/google/start">Sign in with Google</a><a id="atlassianLogin" class="button secondary" href="/auth/atlassian/start">Sign in with Atlassian</a></div>
+    <form id="loginForm"><h2>Sign in with email</h2><input id="loginEmail" type="email" placeholder="Email address" required><input id="loginPassword" type="password" placeholder="Password" required><button>Sign in</button></form>
+    <form id="registerForm"><h2>Create account</h2><input id="registerName" placeholder="Full name" required><input id="registerEmail" type="email" placeholder="Email address" required><input id="registerPassword" type="password" minlength="8" placeholder="Password (8+ characters)" required><button class="secondary">Create account</button></form>
+  </main>
+  <main id="account" hidden>
+    <div class="grid">
+      <section class="card wide"><h2>Workspace</h2><div class="row"><strong id="accountName"></strong><span class="muted" id="accountEmail"></span></div><p class="muted"><span id="workspace"></span> · <span id="plan"></span> · <span id="billingModeSummary"></span> billing · <span id="usage"></span> tokens</p></section>
+      <section class="card"><h2>AI provider</h2><p class="muted">Use your own OpenAI key with a BYOK subscription.</p><form id="openaiKeyForm" class="field"><label for="openaiKey">OpenAI API key</label><input id="openaiKey" type="password" autocomplete="off" placeholder="Saved securely; enter to replace"><button>Save provider key</button></form></section>
+      <section class="card"><h2>Atlassian workspace</h2><p class="muted" id="atlassianStatus">Connect Jira and Confluence with secure OAuth.</p><button id="jira">Connect Jira / Confluence</button></section>
+      <section id="billingControls" class="card wide"><h2>AI usage</h2><p class="muted">Mode: <strong id="billingMode"></strong> · Available managed credits: <strong id="creditBalance">$0.00</strong></p><div class="grid">
+        <div><h3>BYOK platform</h3><p class="muted">Fixed monthly platform access. You supply your OpenAI API usage.</p><button id="byokPlan" disabled>Subscribe monthly</button></div>
+        <div><h3>Managed API credits</h3><p class="muted">Choose an amount and use our managed API capacity.</p><div class="row"><label for="creditCurrency">Currency</label><select id="creditCurrency"><option value="GBP">GBP — British pound</option><option value="USD">USD — US dollar</option><option value="EUR">EUR — Euro</option></select></div><label for="creditAmount">Purchase amount</label><input id="creditAmount" type="number" min="5" max="8000" step="1" value="25"><div class="estimate"><strong id="estimatedDocs">~10 documents</strong> and <strong id="estimatedMinutes">~250 meeting minutes</strong><br><span class="muted">Estimated only; results vary with file size, audio quality, transcription output and processing.</span><div id="creditPurchaseEstimate" class="muted"></div></div><button id="managedCredits" disabled>Buy managed credits</button></div>
+      </div><div class="row" style="margin-top:14px"><label for="billingModeSelect">Active billing path</label><select id="billingModeSelect"><option value="managed">Managed API credits</option><option value="byok">BYOK subscription</option></select><button id="saveBillingMode" class="secondary">Apply</button><button id="manageBilling" class="secondary">Manage billing</button></div></section>
+      <section id="organizationRoles" class="card wide" hidden><h2>Organization roles</h2><div id="organizationMembers"></div></section>
     </div>
   </main>
-  <section>
-    <h2>Workspace plans</h2>
-    <p class="muted">Choose a flat monthly BYOK platform subscription or managed API credits, which are charged from exact token usage plus the configured markup.</p>
-    <button id="byok" disabled>Subscribe to BYOK</button>
-    <button id="credits" disabled>Buy managed API credits</button>
-  </section>
-  <script src="/account.js" defer></script>
+</div>
+<script src="/account.js" defer></script>
 </body>
 </html>

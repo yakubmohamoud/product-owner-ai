@@ -12,6 +12,51 @@ function positiveIntegerFromEnv(name, fallback) {
   return parsed;
 }
 
+const SUPPORTED_MANAGED_CREDIT_CURRENCIES = ['gbp', 'usd', 'eur'];
+
+function getManagedCreditExchangeRates() {
+  const rates = {
+    gbp: Number(process.env.GBP_TO_USD_RATE || '1.27'),
+    eur: Number(process.env.EUR_TO_USD_RATE || '1.08'),
+    usd: 1
+  };
+  for (const currency of SUPPORTED_MANAGED_CREDIT_CURRENCIES) {
+    if (!Number.isFinite(rates[currency]) || rates[currency] <= 0) {
+      throw new Error(`The configured ${currency.toUpperCase()} exchange rate is invalid.`);
+    }
+  }
+  return rates;
+}
+
+function getManagedCreditMarkupBps() {
+  const markupBps = positiveIntegerFromEnv('MANAGED_LLM_MARKUP_BPS', 3000);
+  if (markupBps > 100_000) throw new Error('MANAGED_LLM_MARKUP_BPS must not exceed 100000.');
+  return markupBps;
+}
+
+function estimateStripeFeeMicroUsd(currency, amountMinorUnits, usdPerUnit) {
+  const fixedFeeMinorUnits = 30;
+  return Math.round((amountMinorUnits * 29 / 1000 + fixedFeeMinorUnits) * usdPerUnit * 10_000);
+}
+
+function getManagedCreditConfig() {
+  return {
+    currencies: SUPPORTED_MANAGED_CREDIT_CURRENCIES,
+    exchange_rates_usd_per_unit: getManagedCreditExchangeRates(),
+    markup_basis_points: getManagedCreditMarkupBps(),
+    stripe_fee_estimate_basis_points: 290,
+    fixed_fee_minor_units: { gbp: 30, eur: 30, usd: 30 }
+  };
+}
+
+function validateManagedCreditCurrency(currency) {
+  const normalizedCurrency = String(currency).toLowerCase();
+  if (!SUPPORTED_MANAGED_CREDIT_CURRENCIES.includes(normalizedCurrency)) {
+    throw new Error('Managed API credits are available in GBP, USD, and EUR only.');
+  }
+  return normalizedCurrency;
+}
+
 function getBillingAccount(organizationId) {
   db.prepare(`
     INSERT OR IGNORE INTO billing_accounts (organization_id, mode, updated_at)
@@ -84,20 +129,45 @@ async function createCheckoutSession(organization, user, plan) {
   return { url: session.url };
 }
 
-async function createManagedCreditsCheckout(organization, user) {
+async function createManagedCreditsCheckout(organization, user, amount, currency = 'usd') {
   getBillingAccount(organization.id);
   const stripe = getStripe();
-  const price = process.env.STRIPE_PRICE_MANAGED_CREDITS;
-  const credits = positiveIntegerFromEnv('MANAGED_CREDIT_PACK_MICRO_USD', 25_000_000);
-  if (credits <= 0) throw new Error('MANAGED_CREDIT_PACK_MICRO_USD must be greater than zero.');
-  if (!price) throw new Error('STRIPE_PRICE_MANAGED_CREDITS must be configured for managed API credit purchases.');
-  const configuredPrice = await stripe.prices.retrieve(price);
-  if (!configuredPrice.active || configuredPrice.currency !== 'usd' ||
-    !Number.isSafeInteger(configuredPrice.unit_amount) ||
-    configuredPrice.unit_amount * 10_000 !== credits ||
-    configuredPrice.type !== 'one_time') {
-    throw new Error('STRIPE_PRICE_MANAGED_CREDITS must be an active one-time USD price matching MANAGED_CREDIT_PACK_MICRO_USD.');
+  const normalizedCurrency = validateManagedCreditCurrency(currency);
+  const defaultPack = positiveIntegerFromEnv('MANAGED_CREDIT_PACK_MICRO_USD', 25_000_000);
+  const purchaseAmount = amount === undefined ? defaultPack / 1_000_000 : Number(amount);
+  const limits = { gbp: [5, 8000], usd: [5, 10000], eur: [5, 9000] };
+  if (!Number.isFinite(purchaseAmount) || purchaseAmount < limits[normalizedCurrency][0] || purchaseAmount > limits[normalizedCurrency][1]) {
+    throw new Error(`Managed API credits must be purchased for between ${limits[normalizedCurrency][0]} and ${limits[normalizedCurrency][1]} ${normalizedCurrency.toUpperCase()}.`);
   }
+  if (!Number.isSafeInteger(Math.round(purchaseAmount * 100)) || !/^(\d+)(\.\d{1,2})?$/.test(String(purchaseAmount))) {
+    throw new Error('Managed API credit amount must have at most two decimal places.');
+  }
+  const minorUnits = Math.round(purchaseAmount * 100);
+  const usdPerUnit = getManagedCreditExchangeRates();
+  if (!Number.isFinite(usdPerUnit[normalizedCurrency]) || usdPerUnit[normalizedCurrency] <= 0) {
+    throw new Error('The configured currency exchange rate is invalid.');
+  }
+  const currencyValueMicroUsd = Math.round(minorUnits * 10_000 * usdPerUnit[normalizedCurrency]);
+  if (!Number.isSafeInteger(currencyValueMicroUsd) || currencyValueMicroUsd <= 0) {
+    throw new Error('Managed API credit amount is invalid.');
+  }
+  const credits = currencyValueMicroUsd;
+  const markupBps = getManagedCreditMarkupBps();
+  const markupMicroUsd = Math.round(currencyValueMicroUsd * markupBps / (10_000 + markupBps));
+  const stripeFeeEstimateMicroUsd = estimateStripeFeeMicroUsd(normalizedCurrency, minorUnits, usdPerUnit[normalizedCurrency]);
+  const purchaseBreakdown = {
+    currency: normalizedCurrency.toUpperCase(),
+    amount_minor_units: minorUnits,
+    exchange_rate_usd_per_currency_unit: usdPerUnit[normalizedCurrency],
+    currency_value_micro_usd: currencyValueMicroUsd,
+    markup_micro_usd: markupMicroUsd,
+    markup_basis_points: markupBps,
+    stripe_fee_estimate_micro_usd: stripeFeeEstimateMicroUsd,
+    credits_micro_usd: credits,
+    estimated_gross_profit_micro_usd: markupMicroUsd,
+    estimated_profit_after_processor_fee_micro_usd: markupMicroUsd - stripeFeeEstimateMicroUsd,
+    estimates: { revenue: true, processor_fee: true }
+  };
   const current = db.prepare('SELECT stripe_customer_id FROM subscriptions WHERE organization_id = ?')
     .get(organization.id);
   let customerId = current?.stripe_customer_id;
@@ -121,17 +191,27 @@ async function createManagedCreditsCheckout(organization, user) {
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
     customer: customerId,
-    line_items: [{ price, quantity: 1 }],
+    line_items: [{
+      price_data: {
+        currency: normalizedCurrency,
+        unit_amount: minorUnits,
+        product_data: { name: 'Product Owner AI managed API credits' }
+      },
+      quantity: 1
+    }],
     success_url: `${base}/?billing=credits-added`,
     cancel_url: `${base}/?billing=cancelled`,
     client_reference_id: organization.id,
     metadata: {
       organization_id: organization.id,
       purpose: 'managed_api_credits',
-      credits_micro_usd: String(credits)
+      credits_micro_usd: String(credits),
+      currency_value_micro_usd: String(currencyValueMicroUsd),
+      charge_value_micro_usd: String(currencyValueMicroUsd),
+      purchase_breakdown: JSON.stringify(purchaseBreakdown)
     }
-  }, { idempotencyKey: `poai-credits-${organization.id}-${Date.now()}` });
-  return { url: session.url, credits_micro_usd: credits };
+  }, { idempotencyKey: `poai-credits-${organization.id}-${normalizedCurrency}-${minorUnits}` });
+  return { url: session.url, credits_micro_usd: credits, breakdown: purchaseBreakdown };
 }
 
 async function createBillingPortal(organizationId) {
@@ -257,7 +337,10 @@ function processStripeEvent(event) {
         session.metadata?.purpose === 'managed_api_credits' &&
         session.metadata.organization_id &&
         session.payment_status === 'paid') {
-        const amount = Number.parseInt(session.metadata.credits_micro_usd, 10);
+        const amount = Number.parseInt(session.metadata.charge_value_micro_usd || session.metadata.credits_micro_usd, 10);
+        if (!Number.isSafeInteger(amount) || amount <= 0) {
+          throw new Error('Managed API credit checkout has an invalid charge value.');
+        }
         applyManagedCredit(
           session.metadata.organization_id,
           amount,
@@ -604,6 +687,7 @@ async function drainBillingOutbox() {
 
 module.exports = {
   getStripe,
+  getManagedCreditConfig,
   createCheckoutSession,
   createManagedCreditsCheckout,
   createBillingPortal,

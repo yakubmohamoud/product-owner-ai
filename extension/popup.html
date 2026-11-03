@@ -67,6 +67,27 @@
       <select id="jiraSite"></select>
       <button id="jiraRefreshBtn" class="secondary">Refresh Jira issues</button>
       <ul id="jiraIssues"></ul>
+      <h4>Create Jira work from reviewed requirements</h4>
+      <label for="jiraProjectKey">Jira project key</label>
+      <input id="jiraProjectKey" type="text" placeholder="POAI" />
+      <label for="jiraIssueType">Jira work type</label>
+      <select id="jiraIssueType">
+        <option>Story</option>
+        <option>Bug</option>
+        <option>Epic</option>
+        <option>Task</option>
+      </select>
+      <label for="jiraIssueSummary">Summary</label>
+      <input id="jiraIssueSummary" type="text" />
+      <label for="jiraIssueDescription">Description</label>
+      <textarea id="jiraIssueDescription" rows="4"></textarea>
+      <button id="jiraCreateBtn">Create Jira issue</button>
+      <h4>Create a Confluence requirements page</h4>
+      <label for="confluenceSpaceId">Confluence space ID</label>
+      <input id="confluenceSpaceId" type="text" placeholder="Numeric space ID" />
+      <label for="confluencePageTitle">Page title</label>
+      <input id="confluencePageTitle" type="text" />
+      <button id="confluenceCreateBtn" class="secondary">Create Confluence page</button>
       <label for="confluenceSearch">Confluence search</label>
       <input id="confluenceSearch" type="text" placeholder="Search project knowledge" />
       <button id="confluenceSearchBtn" class="secondary">Search Confluence</button>
@@ -99,6 +120,9 @@
     <textarea id="inputText" rows="12" placeholder="Paste notes, decisions, requirements, or a meeting transcript..."></textarea>
     <label for="documentUpload">Add text documents or exported transcripts</label>
     <input id="documentUpload" type="file" accept=".txt,.md,.csv,.json,.log,.vtt,.srt,.pdf,.docx,.xlsx" multiple />
+    <label for="recordingUpload">Transcribe a meeting recording and classify its requirements</label>
+    <input id="recordingUpload" type="file" accept=".mp4,.mov,.m4v,.webm,.mkv,.avi,.mp3,.wav,.m4a,audio/*,video/*" />
+    <div id="recordingClassification" class="preformatted"></div>
     <label for="apiKey">Your OpenAI API key (optional; used for this request only)</label>
     <input id="apiKey" type="password" autocomplete="off" placeholder="sk-..." />
 

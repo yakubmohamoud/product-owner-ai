@@ -842,6 +842,37 @@ async function exportExcel() {
   }
 }
 
+async function processMeetingRecording() {
+  const file = document.getElementById('recordingUpload').files[0];
+  if (!file) return;
+  updateStatus('Extracting audio and transcribing the meeting recording...');
+  const data = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1]);
+    reader.onerror = () => reject(new Error('Could not read the recording file.'));
+    reader.readAsDataURL(file);
+  });
+  try {
+    const { data: transcription } = await apiRequest('/api/meetings/transcribe-media', {
+      method: 'POST', body: JSON.stringify({ file: { name: file.name, data } })
+    });
+    inputText.value = transcription.transcript;
+    const { data: analysis } = await apiRequest('/api/requirements/classify', {
+      method: 'POST', body: JSON.stringify({ transcript: transcription.transcript })
+    });
+    document.getElementById('recordingClassification').textContent = [
+      `Recommended Jira type: ${analysis.classification.type}`,
+      `Summary: ${analysis.summary || 'No clear summary detected.'}`,
+      analysis.missing_information.length
+        ? `Missing information:\n- ${analysis.missing_information.join('\n- ')}`
+        : 'Information is sufficient for Jira creation.'
+    ].join('\n\n');
+    updateStatus('Recording transcribed and requirements classified. Review the missing-information report before creating Jira work.');
+  } catch (error) {
+    updateStatus(error.message);
+  }
+}
+
 generateBtn.addEventListener('click', generateBacklog);
 exportBtn.addEventListener('click', exportExcel);
 askBtn.addEventListener('click', askProductAgent);
@@ -849,6 +880,7 @@ agendaBtn.addEventListener('click', draftMeetingAgenda);
 document.getElementById('googleMeetingBtn').addEventListener('click', () => scheduleReviewedAgenda('google'));
 document.getElementById('teamsMeetingBtn').addEventListener('click', () => scheduleReviewedAgenda('teams'));
 documentUpload.addEventListener('change', appendUploadedDocuments);
+document.getElementById('recordingUpload').addEventListener('change', processMeetingRecording);
 inputText.addEventListener('input', () => {
   latestGeneratedContext = '';
 });
@@ -860,6 +892,40 @@ document.getElementById('teamPlanBtn').addEventListener('click', () => startChec
 document.getElementById('businessPlanBtn').addEventListener('click', () => startCheckout('business'));
 document.getElementById('paygPlanBtn').addEventListener('click', () => startCheckout('payg'));
 document.getElementById('billingPortalBtn').addEventListener('click', openBillingPortal);
+async function createJiraIssueFromUI() {
+  try {
+    if (!jiraSite.value) throw new Error('Connect Atlassian and select a Jira site first.');
+    const { data } = await apiRequest('/api/integrations/jira/issues', {
+      method: 'POST', body: JSON.stringify({
+        site_id: jiraSite.value,
+        project_key: document.getElementById('jiraProjectKey').value,
+        issue_type: document.getElementById('jiraIssueType').value,
+        summary: document.getElementById('jiraIssueSummary').value,
+        description: document.getElementById('jiraIssueDescription').value
+      })
+    });
+    updateStatus(`Created Jira ${data.key || 'issue'} in the connected organisation.`);
+    await searchJiraIssues();
+  } catch (error) { updateStatus(error.message); }
+}
+
+async function createConfluencePageFromUI() {
+  try {
+    if (!jiraSite.value) throw new Error('Connect Atlassian and select a site first.');
+    const { data } = await apiRequest('/api/integrations/confluence/pages', {
+      method: 'POST', body: JSON.stringify({
+        site_id: jiraSite.value,
+        space_id: document.getElementById('confluenceSpaceId').value,
+        title: document.getElementById('confluencePageTitle').value,
+        content: document.getElementById('jiraIssueDescription').value || '<p>No requirements details supplied.</p>'
+      })
+    });
+    updateStatus(`Created Confluence page ${data.title || data.id || ''}.`);
+  } catch (error) { updateStatus(error.message); }
+}
+
+document.getElementById('jiraCreateBtn').addEventListener('click', createJiraIssueFromUI);
+document.getElementById('confluenceCreateBtn').addEventListener('click', createConfluencePageFromUI);
 document.getElementById('jiraRefreshBtn').addEventListener('click', searchJiraIssues);
 document.getElementById('confluenceSearchBtn').addEventListener('click', searchConfluence);
 document.getElementById('driveSearchBtn').addEventListener('click', searchDriveFiles);

@@ -42,7 +42,7 @@ function attachLocalAuthHandlers() {
       if (!response.ok) throw new Error(data?.error || 'Email/password sign-in failed.');
       csrf = data.csrf_token || '';
       setStatus('Signed in successfully. Redirecting to your workspace…');
-      window.location.href = '/profile.html';
+      window.location.href = '/';
     } catch (error) {
       setStatus(error.message, true);
     }
@@ -65,8 +65,8 @@ function attachLocalAuthHandlers() {
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error || 'Account creation failed.');
       csrf = data.csrf_token || '';
-      setStatus('Account created. Redirecting to your profile…');
-      window.location.href = '/profile.html';
+      setStatus('Account created. Redirecting to your workspace…');
+      window.location.href = '/';
     } catch (error) {
       setStatus(error.message, true);
     }
@@ -132,6 +132,7 @@ async function start() {
     const response = await fetch('/api/auth/providers');
     if (!response.ok) throw new Error('Unable to check sign-in configuration.');
     const configured = await response.json();
+    const managedCreditConfig = configured.managedCreditConfig || {};
     document.getElementById('googleLogin').hidden = !configured.google;
     document.getElementById('atlassianLogin').hidden = !configured.atlassian;
     for (const [buttonId, enabled] of [
@@ -151,6 +152,7 @@ async function start() {
     csrf = account.csrf_token || '';
     document.getElementById('login').hidden = true;
     document.getElementById('account').hidden = false;
+    document.getElementById('logout').hidden = false;
     document.getElementById('accountName').textContent = account.user.name;
     document.getElementById('accountEmail').textContent = account.user.email || 'Atlassian account';
     document.getElementById('workspace').textContent = account.workspace.name;
@@ -169,12 +171,55 @@ async function start() {
     await loadOrganizationMembers(account);
     setStatus('Your workspace is ready.');
 
-    document.getElementById('googleDrive').onclick = () => {
+    document.getElementById('googleDrive')?.addEventListener('click', () => {
       location.href = '/auth/google/start?flow=connect';
-    };
+    });
     document.getElementById('jira').onclick = () => {
       location.href = '/auth/atlassian/start?flow=connect';
     };
+    try {
+      const integrations = await request('/api/integrations');
+      if (integrations.integrations?.some((integration) => integration.provider === 'atlassian')) {
+        document.getElementById('atlassianStatus').textContent = 'Jira and Confluence are connected.';
+      }
+    } catch (_) { /* Integration status is optional. */ }
+    document.getElementById('openaiKeyForm').addEventListener('submit', async (event) => {
+      event.preventEvent?.();
+      event.preventDefault();
+      try {
+        const value = document.getElementById('openaiKey').value.trim();
+        if (!value) throw new Error('Enter an OpenAI API key.');
+        await request('/api/profile/credentials', 'POST', { provider: 'openai', values: { api_key: value } });
+        document.getElementById('openaiKey').value = '';
+        document.getElementById('openaiKey').placeholder = 'Saved securely; enter to replace';
+        setStatus('OpenAI provider key saved securely.');
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    });
+    const creditAmount = document.getElementById('creditAmount');
+    const creditCurrency = document.getElementById('creditCurrency');
+    const updateEstimate = () => {
+      const configuredRates = managedCreditConfig.exchange_rates_usd_per_unit || { gbp: 1.27, usd: 1, eur: 1.08 };
+      const amount = Math.max(0, Number(creditAmount.value) || 0);
+      const dollars = amount * (configuredRates[creditCurrency.value.toLowerCase()] || 1);
+      document.getElementById('estimatedDocs').textContent = `~${Math.max(0, Math.round(dollars / 2.5))} documents`;
+      document.getElementById('estimatedMinutes').textContent = `~${Math.max(0, Math.round(dollars * 10))} meeting minutes`;
+      const markupBps = Number(managedCreditConfig.markup_basis_points || 3000);
+      const markupUsd = dollars * markupBps / (10_000 + markupBps);
+      const currencyRate = configuredRates[creditCurrency.value.toLowerCase()] || 1;
+      const processorFeeUsd = (amount * 0.029 + 0.30) * currencyRate;
+      const symbol = { GBP: '£', USD: '$', EUR: '€' }[creditCurrency.value];
+      document.getElementById('creditPurchaseEstimate').textContent =
+        `Credit value: $${dollars.toFixed(2)} USD (${symbol}${amount.toFixed(2)}). Estimated markup revenue: $${markupUsd.toFixed(2)} USD; estimated Stripe fee: $${processorFeeUsd.toFixed(2)} USD; estimated net before tax: $${(markupUsd - processorFeeUsd).toFixed(2)} USD.`;
+    };
+    creditCurrency.addEventListener('change', () => {
+      const limits = { GBP: 8000, USD: 10000, EUR: 9000 };
+      creditAmount.max = limits[creditCurrency.value];
+      updateEstimate();
+    });
+    creditAmount.addEventListener('input', updateEstimate);
+    updateEstimate();
     document.getElementById('manageBilling').onclick = async () => {
       try {
         location.href = (await request('/api/billing/portal', 'POST', {})).url;
@@ -208,7 +253,9 @@ async function start() {
       if (!button) continue;
       button.onclick = async () => {
         try {
-          location.href = (await request('/api/billing/credits/checkout', 'POST', {})).url;
+          const amount = Number(document.getElementById('creditAmount')?.value);
+          const currency = String(document.getElementById('creditCurrency')?.value || 'GBP').toLowerCase();
+          location.href = (await request('/api/billing/credits/checkout', 'POST', { amount, currency })).url;
         } catch (error) {
           setStatus(error.message, true);
         }

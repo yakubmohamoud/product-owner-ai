@@ -5,6 +5,11 @@ const cors = require('cors');
 const ExcelJS = require('exceljs');
 const crypto = require('node:crypto');
 const path = require('node:path');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const { spawn } = require('node:child_process');
+let ffmpegPath = null;
+try { ffmpegPath = require('ffmpeg-static'); } catch {}
 const {
   db,
   publicBaseUrl,
@@ -60,6 +65,7 @@ const {
   setBillingMode,
   getLlmUsage,
   createManagedCreditsCheckout,
+  getManagedCreditConfig,
   cleanupExpiredReservations
 } = require('./services/billingService');
 const standupService = require('./services/standupService');
@@ -159,7 +165,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({
-  limit: process.env.REQUEST_BODY_LIMIT || '10mb',
+  limit: process.env.REQUEST_BODY_LIMIT || '120mb',
   verify(req, _res, buffer) {
     if (req.originalUrl === '/api/billing/webhook' || req.originalUrl === '/api/webhooks/slack') {
       req.rawBody = Buffer.from(buffer);
@@ -229,7 +235,8 @@ function enforceUsage(req, res, next) {
     }
   } else {
     if (!process.env.OPENAI_API_KEY) {
-      return res.status(503).json({ error: 'Managed AI is not configured. Set the platform API key or use BYOK.' });
+      req.agentApiKey = null;
+      return next();
     }
     const requestTextLength = ['text', 'context', 'question']
       .map((field) => req.body?.[field])
@@ -339,11 +346,12 @@ app.get('/api/auth/providers', (_req, res) => {
     stripe: Boolean(process.env.STRIPE_SECRET_KEY),
     prices: {
       byok: Boolean(process.env.STRIPE_PRICE_BYOK),
-      managedCredits: Boolean(process.env.STRIPE_PRICE_MANAGED_CREDITS),
+      managedCredits: Boolean(process.env.STRIPE_SECRET_KEY),
       team: Boolean(process.env.STRIPE_PRICE_TEAM),
       business: Boolean(process.env.STRIPE_PRICE_BUSINESS),
       payg: Boolean(process.env.STRIPE_PRICE_PAYG)
-    }
+    },
+    managedCreditConfig: getManagedCreditConfig()
   });
 });
 
@@ -618,7 +626,9 @@ app.post('/api/projects', requireAuthentication, requireCsrf, (req, res) => {
       req.auth.organization_id,
       req.auth.user_id,
       req.body?.name,
-      req.body?.context || ''
+      typeof req.body?.context === 'string'
+        ? req.body.context
+        : (typeof req.body?.notes === 'string' ? req.body.notes : '')
     );
     res.status(201).json({ project });
   } catch (error) {
@@ -707,6 +717,70 @@ app.get('/api/integrations', requireAuthentication, (req, res) => {
   res.json({ integrations });
 });
 
+app.post('/api/requirements/classify', requireAuthentication, requireCsrf, (req, res) => {
+  const transcript = typeof req.body?.transcript === 'string' ? req.body.transcript.trim() : '';
+  if (!transcript || transcript.length > 500000) {
+    return res.status(400).json({ error: 'Meeting transcript is required and must be under 500,000 characters.' });
+  }
+  const lower = transcript.toLowerCase();
+  const bugSignals = /(crash|error|bug|incorrect|fails?|broken|unexpected|500|exception)/.test(lower);
+  const epicSignals = /(programme|roadmap|quarter|multiple teams|strategic|epic|initiative)/.test(lower);
+  const proposedType = bugSignals ? 'Bug' : epicSignals ? 'Epic' : 'Story';
+  const required = proposedType === 'Bug'
+    ? ['steps to reproduce', 'actual result', 'expected result', 'environment']
+    : proposedType === 'Epic'
+      ? ['business outcome', 'in scope', 'out of scope', 'target release']
+      : ['actor / user role', 'desired outcome', 'acceptance criteria', 'priority'];
+  const missing = required.filter((item) => !lower.includes(item) && !lower.includes(item.replace(' / ', ' ').replace(' / ', '')));
+  const sentences = transcript.split(/[.!?\n]+/).map((value) => value.trim()).filter(Boolean).slice(0, 8);
+  res.json({
+    classification: { type: proposedType, confidence: proposedType === 'Story' ? 0.65 : 0.75 },
+    summary: sentences.slice(0, 3).join('. '),
+    missing_information: missing,
+    sufficient_for_creation: missing.length === 0,
+    next_questions: missing.map((item) => `Please clarify the ${item}.`)
+  });
+});
+
+app.post('/api/meetings/transcribe-media', requireAuthentication, requireCsrf, async (req, res) => {
+  try {
+    if (!ffmpegPath) return res.status(503).json({ error: 'Meeting audio processing is unavailable because FFmpeg is not installed.' });
+    const file = req.body?.file;
+    if (!file?.data || !file?.name) return res.status(400).json({ error: 'Provide a base64 recording file and file name.' });
+    const allowed = /\.(mp4|mov|m4v|webm|mkv|avi|mp3|wav|m4a)$/i.test(file.name);
+    if (!allowed) return res.status(400).json({ error: 'Supported recordings are MP4, MOV, M4V, WebM, MKV, AVI, MP3, WAV, and M4A.' });
+    const buffer = Buffer.from(file.data, 'base64');
+    if (!buffer.length || buffer.length > 100 * 1024 * 1024) return res.status(400).json({ error: 'Recording must be between 1 byte and 100 MB.' });
+    const credentials = readUserCredentials(req.auth.user_id).find((entry) => entry.provider === 'openai');
+    const apiKey = process.env.OPENAI_API_KEY || credentials?.values?.api_key;
+    if (!apiKey) return res.status(402).json({ error: 'Configure an OpenAI API key to transcribe recordings.' });
+
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'poai-media-'));
+    const input = path.join(directory, file.name.replace(/[^a-zA-Z0-9_.-]/g, '_'));
+    const output = path.join(directory, 'audio.mp3');
+    await fs.writeFile(input, buffer);
+    await new Promise((resolve, reject) => {
+      const child = spawn(ffmpegPath, ['-y', '-i', input, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '64k', output], { stdio: 'ignore' });
+      child.on('error', reject);
+      child.on('exit', (code) => code === 0 ? resolve() : reject(new Error('FFmpeg could not extract audio from the recording.')));
+    });
+    const audio = await fs.readFile(output);
+    const form = new FormData();
+    form.append('file', new Blob([audio], { type: 'audio/mpeg' }), 'audio.mp3');
+    form.append('model', process.env.OPENAI_TRANSCRIPTION_MODEL || 'whisper-1');
+    const transcription = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form,
+      signal: AbortSignal.timeout(120000)
+    });
+    const payload = await transcription.json();
+    await fs.rm(directory, { recursive: true, force: true });
+    if (!transcription.ok) return res.status(502).json({ error: payload.error?.message || 'Recording transcription failed.' });
+    res.json({ transcript: payload.text || '', file_name: file.name });
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Could not process meeting recording.' });
+  }
+});
+
 app.get('/api/integrations/atlassian/sites', requireAuthentication, async (req, res) => {
   try {
     const sites = await integrationService.listAtlassianSites(req.auth.organization_id);
@@ -736,6 +810,39 @@ app.post('/api/integrations/jira/issues/:issueKey/comments', requireAuthenticati
       req.body?.site_id,
       req.params.issueKey,
       req.body?.text
+    );
+    res.status(201).json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/integrations/jira/issues', requireAuthentication, requireCsrf, async (req, res) => {
+  try {
+    const result = await integrationService.createJiraIssue(
+      req.auth.organization_id, req.body?.site_id, req.body
+    );
+    res.status(201).json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.put('/api/integrations/jira/issues/:issueKey', requireAuthentication, requireCsrf, async (req, res) => {
+  try {
+    const result = await integrationService.updateJiraIssue(
+      req.auth.organization_id, req.body?.site_id, req.params.issueKey, req.body
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/integrations/confluence/pages', requireAuthentication, requireCsrf, async (req, res) => {
+  try {
+    const result = await integrationService.createConfluencePage(
+      req.auth.organization_id, req.body?.site_id, req.body
     );
     res.status(201).json(result);
   } catch (error) {
@@ -920,7 +1027,9 @@ app.post('/api/billing/credits/checkout', requireAuthentication, requireCsrf, as
       name: req.auth.organization_name
     };
     const user = { email: req.auth.email };
-    res.json(await createManagedCreditsCheckout(organization, user));
+    const amount = typeof req.body?.amount === 'number' ? req.body.amount : undefined;
+    const currency = typeof req.body?.currency === 'string' ? req.body.currency : 'usd';
+    res.json(await createManagedCreditsCheckout(organization, user, amount, currency));
   } catch (error) {
     logError('managed_credit_checkout_failed', error, { request_id: req.requestId });
     res.status(400).json({ error: error.message });

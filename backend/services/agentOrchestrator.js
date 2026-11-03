@@ -277,7 +277,14 @@ async function answerProductQuestion(context, question, agentClient = client) {
     throw new Error('A question is required.');
   }
   if (!agentClient) {
-    throw new Error('Configure OPENAI_API_KEY or provide a request-scoped API key to ask project questions.');
+    const excerpt = context.replace(/\s+/g, ' ').trim().slice(0, 500);
+    return {
+      answer: `Based on the supplied context: ${excerpt || 'No supporting context was provided.'}`,
+      known_facts: excerpt ? [excerpt] : [],
+      unknowns: [`The answer depends on information not present in the project context for: ${question.trim()}`],
+      follow_up_actions: ['Add the missing requirements or project details, then ask again.'],
+      generation_mode: 'template'
+    };
   }
 
   const answer = await runAgent(
@@ -303,7 +310,24 @@ async function generateMeetingAgenda(context, trigger, agentClient = client) {
     throw new Error(`Trigger must be one of: ${validTriggers.join(', ')}.`);
   }
   if (!agentClient) {
-    throw new Error('Configure OPENAI_API_KEY or provide a request-scoped API key to generate an agenda.');
+    const triggerGoals = {
+      open_question: 'Resolve an open product question',
+      inconclusive_meeting: 'Agree on the outcome of an inconclusive meeting',
+      stale_story: 'Clarify and unblock a stale user story'
+    };
+    return {
+      title: triggerGoals[trigger],
+      goal: triggerGoals[trigger],
+      attendees: ['Product Owner', 'Engineering', 'QA'],
+      topics: [{
+        topic: 'Review the supplied project context',
+        duration_minutes: 25,
+        prompt: context.replace(/\s+/g, ' ').trim().slice(0, 500)
+      }],
+      decisions_needed: ['Record decisions and unresolved questions in the project context.'],
+      preparation: ['Review the supplied project context before the meeting.'],
+      generation_mode: 'template'
+    };
   }
 
   const agenda = await runAgent(

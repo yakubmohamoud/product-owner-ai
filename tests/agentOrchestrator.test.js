@@ -151,6 +151,17 @@ test('drafts meeting agendas for supported Agile triggers', async () => {
   );
 });
 
+test('provides template answers and agendas without an AI provider', async () => {
+  const answer = await answerProductQuestion('Payments are out of scope.', 'What is included?', null);
+  assert.equal(answer.generation_mode, 'template');
+  assert.match(answer.answer, /Payments are out of scope/);
+
+  const agenda = await generateMeetingAgenda('Invoice export format is unresolved.', 'open_question', null);
+  assert.equal(agenda.generation_mode, 'template');
+  assert.equal(agenda.attendees.length, 3);
+  assert.equal(agenda.topics.length, 1);
+});
+
 test('creates a reviewable stand-up summary and Jira comment draft', () => {
   const result = buildStandupDraft([{
     member: 'Alex',
