@@ -1,0 +1,51 @@
+services:
+  - type: web
+    name: product-owner-ai-api
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    disk:
+      name: product-owner-ai-data
+      mountPath: /app/.data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: DATA_DIRECTORY
+        value: /app/.data
+      - key: TRUST_PROXY
+        value: true
+      - key: APP_SECRET
+        generateValue: true
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: EXTENSION_ORIGIN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: ATLASSIAN_CLIENT_ID
+        sync: false
+      - key: ATLASSIAN_CLIENT_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_BYOK
+        sync: false
+      - key: STRIPE_PRICE_MANAGED_CREDITS
+        sync: false
+      - key: STRIPE_PRICE_TEAM
+        sync: false
+      - key: STRIPE_PRICE_BUSINESS
+        sync: false
+      - key: STRIPE_PRICE_PAYG
+        sync: false
+      - key: STRIPE_METER_EVENT_NAME
+        value: ai_units
