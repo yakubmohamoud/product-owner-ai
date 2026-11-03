@@ -7,7 +7,8 @@
     "dev": "node backend/server.js",
     "start": "node backend/server.js",
     "smoke": "node --check backend/server.js && node --check backend/services/agentOrchestrator.js && node --check backend/services/aiService.js && node --check backend/services/authService.js && node --check backend/services/billingService.js && node --check backend/services/database.js && node --check backend/services/documentService.js && node --check backend/services/integrationService.js && node --check backend/services/llmTelemetry.js && node --check backend/services/logger.js && node --check backend/services/projectService.js && node --check backend/services/rateLimitService.js && node --check backend/services/standupService.js && node --check backend/services/teamWorkflowService.js && node --check extension/popup.js && node --check public/account.js && node --check public/profile.js",
-    "test": "node --test"
+    "test": "node --test",
+    "package:extension": "node scripts/package-extension.js"
   },
   "keywords": [
     "chrome-extension",

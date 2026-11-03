@@ -1,4 +1,17 @@
-const API_BASE = 'http://localhost:3000';
+const DEFAULT_API_BASE = 'https://api.productownerai.com';
+let apiBase = DEFAULT_API_BASE;
+
+async function getApiBase() {
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      const stored = await chrome.storage.local.get(['apiBase']);
+      if (stored.apiBase) apiBase = stored.apiBase;
+    }
+  } catch (_) {
+    // Use the production API when extension storage is unavailable.
+  }
+  return apiBase.replace(/\/$/, '');
+}
 
 const inputText = document.getElementById('inputText');
 const generateBtn = document.getElementById('generateBtn');
@@ -57,12 +70,13 @@ let integrationProviders = new Set();
 
 async function apiRequest(path, options = {}) {
   const method = options.method || 'GET';
+  const baseUrl = await getApiBase();
   const headers = new Headers(options.headers || {});
   if (options.body !== undefined) headers.set('Content-Type', 'application/json');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken) {
     headers.set('X-CSRF-Token', csrfToken);
   }
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${baseUrl}${path}`, {
     ...options,
     method,
     headers,
@@ -83,14 +97,14 @@ async function apiRequest(path, options = {}) {
   return { response, data };
 }
 
-function openAuth(provider, flow) {
-  const url = `${API_BASE}/auth/${provider}/start${flow === 'connect' ? '?flow=connect' : ''}`;
+async function openAuth(provider, flow) {
+  const url = `${await getApiBase()}/auth/${provider}/start${flow === 'connect' ? '?flow=connect' : ''}`;
   window.open(url, '_blank', 'noopener');
 }
 
 async function loadAccount() {
   try {
-    const providersResponse = await fetch(`${API_BASE}/api/auth/providers`, { credentials: 'include' });
+    const providersResponse = await fetch(`${await getApiBase()}/api/auth/providers`, { credentials: 'include' });
     if (!providersResponse.ok) throw new Error('API is not available.');
     const configured = await providersResponse.json();
     document.getElementById('googleLogin').onclick = () => openAuth('google', 'login');
@@ -958,6 +972,21 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     signedInActions.classList.add('hidden');
     projectPanel.classList.add('hidden');
     authStatus.textContent = 'Signed out.';
+  } catch (error) {
+    updateStatus(error.message);
+  }
+});
+const apiBaseInput = document.getElementById('apiBaseInput');
+const saveApiBaseBtn = document.getElementById('saveApiBaseBtn');
+getApiBase().then((baseUrl) => { apiBaseInput.value = baseUrl; }).catch(() => {});
+saveApiBaseBtn.addEventListener('click', async () => {
+  try {
+    const parsed = new URL(apiBaseInput.value.trim());
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Use an http or https API URL.');
+    apiBase = parsed.origin;
+    await chrome.storage.local.set({ apiBase });
+    updateStatus('API server saved. Reloading sign-in status…');
+    await loadAccount();
   } catch (error) {
     updateStatus(error.message);
   }

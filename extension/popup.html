@@ -10,7 +10,19 @@
 
 <body>
   <main class="container">
-    <h1>Product Owner AI</h1>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">AI requirements workspace</p>
+        <h1>Product Owner AI</h1>
+      </div>
+    </header>
+
+    <details class="section-card api-settings">
+      <summary>API server</summary>
+      <label for="apiBaseInput">Production API URL</label>
+      <input id="apiBaseInput" type="text" value="https://api.productownerai.com" />
+      <button id="saveApiBaseBtn" class="secondary">Save API server</button>
+    </details>
 
     <section id="accountPanel" class="section-card">
       <h3>Account and workspace</h3>
