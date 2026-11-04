@@ -1,4 +1,4 @@
-const DEFAULT_API_BASE = 'https://api.productownerai.com';
+const DEFAULT_API_BASE = 'https://my-product-owner-ai.onrender.com';
 let apiBase = DEFAULT_API_BASE;
 
 async function getApiBase() {

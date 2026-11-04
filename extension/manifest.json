@@ -1,13 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "Product Owner AI",
+  "name": "MY PO",
   "version": "1.0.0",
   "description": "Turn meeting recordings and documents into reviewed requirements, Jira work and Confluence pages.",
   "permissions": [
     "storage"
   ],
   "host_permissions": [
-    "https://api.productownerai.com/*",
+    "https://my-product-owner-ai.onrender.com/*",
     "http://localhost:3000/*"
   ],
   "icons": {
