@@ -17,6 +17,12 @@
       </div>
     </header>
 
+    <nav class="simple-nav" id="simpleNav" aria-label="MY PO sections">
+      <button type="button" data-screen="create" class="active">Create</button>
+      <button type="button" data-screen="review">Review</button>
+      <button type="button" data-screen="account">Account</button>
+    </nav>
+
     <details class="section-card api-settings">
       <summary>API server</summary>
       <label for="apiBaseInput">Production API URL</label>
@@ -73,6 +79,11 @@
         <div id="integrationStatus" class="preformatted"></div>
         <button id="logoutBtn" class="secondary">Sign out</button>
       </div>
+    </section>
+
+    <section id="reviewEmptyState" class="review-empty">
+      <strong>Your reviewed work will appear here</strong>
+      <p>Add project notes on the Create screen, then generate your project pack.</p>
     </section>
 
     <section id="projectPanel" class="section-card hidden">

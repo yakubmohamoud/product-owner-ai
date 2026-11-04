@@ -64,9 +64,8 @@ function attachLocalAuthHandlers() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error || 'Account creation failed.');
-      csrf = data.csrf_token || '';
-      setStatus('Account created. Redirecting to your workspace…');
-      window.location.href = '/';
+      setStatus(data.message || 'Check your email and confirm your address before signing in.');
+      registerForm.reset();
     } catch (error) {
       setStatus(error.message, true);
     }

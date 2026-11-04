@@ -113,6 +113,71 @@ select {
   pointer-events: none;
 }
 
+.simple-nav {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.simple-nav button {
+  padding: 9px 5px;
+}
+
+.simple-nav button.active {
+  outline: 2px solid #93c5fd;
+}
+
+.simple-screen { display: none; }
+.simple-screen.active { display: block; }
+
+#inputText { min-height: 150px; }
+#apiKey, label[for="apiKey"], #recordingUpload, label[for="recordingUpload"], #recordingClassification,
+#projectPanel, .api-settings, #exportBtn,
+#result .section-card { display: none !important; }
+#result .section-card:nth-child(1), #result .section-card:nth-child(2) { display: block !important; }
+
+#accountPanel {
+  margin-top: 0;
+}
+
+.review-empty {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: white;
+  margin-top: 12px;
+  padding: 18px;
+  text-align: center;
+}
+
+.review-empty p {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#signedInActions > label,
+#signedInActions > select,
+#signedInActions > input,
+#signedInActions > #createWorkspaceBtn,
+#signedInActions > #teamPlanBtn,
+#signedInActions > #businessPlanBtn,
+#signedInActions > #paygPlanBtn,
+#signedInActions > #billingPortalBtn,
+#signedInActions > #inviteEmail,
+#signedInActions > #inviteBtn,
+#signedInActions > #inviteOutput,
+#signedInActions > label[for="inviteEmail"],
+#signedInActions > label[for="invitationToken"],
+#signedInActions > #invitationToken,
+#signedInActions > #acceptInviteBtn,
+#signedInActions > label[for="newWorkspaceName"] {
+  display: none;
+}
+
+#accountPanel h3 { font-size: 18px; }
+#integrationStatus { font-size: 12px; }
+
 .preformatted {
   margin-top: 10px;
   white-space: pre-wrap;

@@ -271,6 +271,18 @@ const userColumns = db.prepare('PRAGMA table_info(users)').all();
 if (!userColumns.some((column) => column.name === 'password_hash')) {
   db.exec('ALTER TABLE users ADD COLUMN password_hash TEXT;');
 }
+if (!userColumns.some((column) => column.name === 'email_verified_at')) {
+  db.exec('ALTER TABLE users ADD COLUMN email_verified_at TEXT;');
+}
+db.prepare("UPDATE users SET email_verified_at = ? WHERE email_verified_at IS NULL AND password_hash IS NOT NULL AND created_at < ?").run(new Date().toISOString(), '2026-11-04T00:00:00.000Z');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS email_verification_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+`);
 
 const membershipColumns = db.prepare('PRAGMA table_info(memberships)').all();
 if (!membershipColumns.some((column) => column.name === 'organization_role')) {

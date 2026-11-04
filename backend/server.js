@@ -31,6 +31,8 @@ const {
   issueInvitation,
   acceptInvitation,
   registerLocalUser,
+  sendEmailVerification,
+  verifyEmailToken,
   loginLocalUser,
   writeUserCredentials,
   readUserCredentials,
@@ -355,7 +357,7 @@ app.get('/api/auth/providers', (_req, res) => {
   });
 });
 
-app.post('/api/auth/register', authenticationRateLimit, (req, res) => {
+app.post('/api/auth/register', authenticationRateLimit, async (req, res) => {
   try {
     const { name, email, password } = req.body || {};
     if (typeof name !== 'string' || name.trim().length < 2) {
@@ -365,13 +367,27 @@ app.post('/api/auth/register', authenticationRateLimit, (req, res) => {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
     const response = registerLocalUser(name, email, password, res);
+    await sendEmailVerification(response.user, res);
     return res.status(201).json({
       user: { id: response.user.id, name: response.user.name, email: response.user.email },
-      workspace: { id: response.organizationId },
-      csrf_token: response.csrf
+      email_verification_required: true,
+      message: 'Check your email and confirm your address to finish creating your account.'
     });
   } catch (error) {
     return res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/auth/verify-email', (req, res) => {
+  try {
+    const user = verifyEmailToken(req.query.token, res);
+    const membership = db.prepare('SELECT organization_id FROM memberships WHERE user_id = ? ORDER BY created_at LIMIT 1').get(user.id);
+    if (!membership) throw new Error('Your account is missing its workspace. Please contact support.');
+    createSession(user.id, membership.organization_id, res);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="1;url=/"><title>Email confirmed</title></head><body style="font-family:Arial;padding:40px;text-align:center"><h1>Email confirmed</h1><p>You can now sign in to MY PO.</p><p><a href="/">Continue to MY PO</a></p></body></html>`);
+  } catch (error) {
+    res.status(400).type('text/plain').send(error.message);
   }
 });
 

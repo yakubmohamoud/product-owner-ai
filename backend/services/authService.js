@@ -433,8 +433,8 @@ function findOrCreateAccount(profile, provider) {
   const organizationId = createId();
   const workspaceName = `${profile.name}'s Workspace`.slice(0, 100);
   const create = db.transaction(() => {
-    db.prepare('INSERT INTO users (id, name, email, created_at) VALUES (?, ?, ?, ?)')
-      .run(userId, profile.name.slice(0, 120), profile.email, now);
+    db.prepare('INSERT INTO users (id, name, email, email_verified_at, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(userId, profile.name.slice(0, 120), profile.email, now, now);
     db.prepare('INSERT INTO organizations (id, name, owner_user_id, created_at) VALUES (?, ?, ?, ?)')
       .run(organizationId, workspaceName, userId, now);
     db.prepare(`
@@ -483,8 +483,51 @@ function registerLocalUser(name, email, password, res) {
 
   transaction();
 
-  const csrf = createSession(userId, organizationId, res);
-  return { user: db.prepare('SELECT * FROM users WHERE id = ?').get(userId), organizationId, csrf };
+  return { user: db.prepare('SELECT * FROM users WHERE id = ?').get(userId), organizationId };
+}
+
+async function sendEmailVerification(user, res) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  db.prepare('DELETE FROM email_verification_tokens WHERE user_id = ?').run(user.id);
+  db.prepare(`INSERT INTO email_verification_tokens (token_hash, user_id, expires_at, created_at)
+    VALUES (?, ?, ?, ?)`).run(tokenHash, user.id, expiresAt.toISOString(), now.toISOString());
+
+  const baseUrl = process.env.PUBLIC_BASE_URL || publicBaseUrl;
+  const verifyUrl = `${String(baseUrl).replace(/\/$/, '')}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
+  const resendKey = process.env.RESEND_API_KEY;
+  if (resendKey) {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: process.env.EMAIL_FROM || 'MY PO <onboarding@resend.dev>',
+        to: [user.email],
+        subject: 'Confirm your MY PO email address',
+        html: `<p>Welcome to MY PO.</p><p><a href="${verifyUrl}">Confirm your email address</a></p><p>This link expires in 24 hours.</p>`
+      })
+    });
+    if (!response.ok) throw new Error('We could not send the confirmation email. Please try again.');
+  } else {
+    console.log(JSON.stringify({ event: 'email_verification_link', email: user.email, verifyUrl }));
+  }
+  return verifyUrl;
+}
+
+function verifyEmailToken(token, res) {
+  if (typeof token !== 'string' || token.length < 32) throw new Error('The confirmation link is invalid or incomplete.');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const record = db.prepare('SELECT * FROM email_verification_tokens WHERE token_hash = ?').get(tokenHash);
+  if (!record) throw new Error('This confirmation link is invalid or has already been used.');
+  if (new Date(record.expires_at).getTime() <= Date.now()) {
+    db.prepare('DELETE FROM email_verification_tokens WHERE token_hash = ?').run(tokenHash);
+    throw new Error('This confirmation link has expired. Sign in and request a new one.');
+  }
+  db.prepare('UPDATE users SET email_verified_at = ? WHERE id = ?').run(new Date().toISOString(), record.user_id);
+  db.prepare('DELETE FROM email_verification_tokens WHERE user_id = ?').run(record.user_id);
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(record.user_id);
 }
 
 function loginLocalUser(email, password, res) {
@@ -497,6 +540,9 @@ function loginLocalUser(email, password, res) {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(identity.user_id);
   if (!user || !user.password_hash || !verifyPassword(password, user.password_hash)) {
     throw new Error('Invalid email or password.');
+  }
+  if (!user.email_verified_at) {
+    throw new Error('Please confirm your email address before signing in.');
   }
 
   const membership = db.prepare('SELECT organization_id FROM memberships WHERE user_id = ? ORDER BY created_at LIMIT 1').get(user.id);
@@ -777,6 +823,8 @@ module.exports = {
   updateOrganizationMemberRole,
   organizationRoles,
   registerLocalUser,
+  sendEmailVerification,
+  verifyEmailToken,
   loginLocalUser,
   writeUserCredentials,
   readUserCredentials,

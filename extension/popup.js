@@ -639,6 +639,7 @@ function renderResult(data) {
   );
 
   resultEl.classList.remove('hidden');
+  document.getElementById('reviewEmptyState')?.classList.add('hidden');
 }
 
 async function generateBacklog() {
@@ -985,6 +986,50 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 const apiBaseInput = document.getElementById('apiBaseInput');
 const saveApiBaseBtn = document.getElementById('saveApiBaseBtn');
 getApiBase().then((baseUrl) => { apiBaseInput.value = baseUrl; }).catch(() => {});
+
+function setupSimpleScreens() {
+  const container = document.querySelector('.container');
+  const nav = document.getElementById('simpleNav');
+  const createScreen = document.createElement('section');
+  createScreen.className = 'simple-screen active';
+  createScreen.dataset.screen = 'create';
+  const reviewScreen = document.createElement('section');
+  reviewScreen.className = 'simple-screen';
+  reviewScreen.dataset.screen = 'review';
+  const accountScreen = document.createElement('section');
+  accountScreen.className = 'simple-screen';
+  accountScreen.dataset.screen = 'account';
+  nav.insertAdjacentElement('afterend', createScreen);
+  createScreen.insertAdjacentElement('afterend', reviewScreen);
+  reviewScreen.insertAdjacentElement('afterend', accountScreen);
+
+  const moveWithLabel = (controlId, screen) => {
+    const control = document.getElementById(controlId);
+    const label = document.querySelector(`label[for="${controlId}"]`);
+    if (label) screen.appendChild(label);
+    if (control) screen.appendChild(control);
+  };
+  moveWithLabel('inputText', createScreen);
+  moveWithLabel('documentUpload', createScreen);
+  const generateRow = generateBtn.parentElement;
+  createScreen.appendChild(generateRow);
+  createScreen.appendChild(statusBox);
+
+  reviewScreen.appendChild(document.getElementById('reviewEmptyState'));
+  reviewScreen.appendChild(document.getElementById('result'));
+  accountScreen.appendChild(document.getElementById('accountPanel'));
+
+  nav.querySelectorAll('[data-screen]').forEach((button) => {
+    button.addEventListener('click', () => {
+      nav.querySelectorAll('[data-screen]').forEach((item) => item.classList.remove('active'));
+      container.querySelectorAll('.simple-screen').forEach((screen) => screen.classList.remove('active'));
+      button.classList.add('active');
+      container.querySelector(`.simple-screen[data-screen="${button.dataset.screen}"]`)?.classList.add('active');
+    });
+  });
+}
+setupSimpleScreens();
+
 document.getElementById('extensionLoginForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   const submitButton = event.currentTarget.querySelector('button[type="submit"]');
@@ -1009,7 +1054,7 @@ document.getElementById('extensionRegisterForm').addEventListener('submit', asyn
   const submitButton = event.currentTarget.querySelector('button[type="submit"]');
   submitButton.disabled = true;
   try {
-    await apiRequest('/api/auth/register', {
+    const { data } = await apiRequest('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify({
         name: document.getElementById('extensionRegisterName').value.trim(),
@@ -1017,7 +1062,8 @@ document.getElementById('extensionRegisterForm').addEventListener('submit', asyn
         password: document.getElementById('extensionRegisterPassword').value
       })
     });
-    await loadAccount();
+    updateStatus(data.message || 'Check your email and confirm your address before signing in.');
+    event.currentTarget.reset();
   } catch (error) {
     updateStatus(error.message);
   } finally {

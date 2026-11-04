@@ -127,6 +127,7 @@ test('local email/password registration and login create a session and preserve 
   const response = { append: (_header, value) => cookies.push(value) };
   const result = auth.registerLocalUser('Local User', 'local@example.test', 'secure-password', response);
   assert.equal(result.user.email, 'local@example.test');
+  db.prepare('UPDATE users SET email_verified_at = ? WHERE id = ?').run(new Date().toISOString(), result.user.id);
   const login = auth.loginLocalUser('local@example.test', 'secure-password', response);
   assert.equal(login.user.id, result.user.id);
 

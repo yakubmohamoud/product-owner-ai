@@ -19,6 +19,10 @@ services:
         value: true
       - key: APP_SECRET
         generateValue: true
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
       - key: PUBLIC_BASE_URL
         sync: false
       - key: EXTENSION_ORIGIN
