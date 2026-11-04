@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MY PO",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Turn meeting recordings and documents into reviewed requirements, Jira work and Confluence pages.",
   "permissions": [
     "storage"
