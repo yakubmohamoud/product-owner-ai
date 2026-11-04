@@ -42,8 +42,23 @@ h1 {
   font-weight: 700;
 }
 
-.api-settings input {
+ .api-settings input {
   margin-top: 10px;
+}
+
+.compact-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+#signInActions details {
+  margin-top: 10px;
+}
+
+#signInActions summary {
+  cursor: pointer;
+  font-weight: 700;
 }
 
 label {

@@ -107,11 +107,13 @@ async function loadAccount() {
     const providersResponse = await fetch(`${await getApiBase()}/api/auth/providers`, { credentials: 'include' });
     if (!providersResponse.ok) throw new Error('API is not available.');
     const configured = await providersResponse.json();
-    document.getElementById('googleLogin').onclick = () => openAuth('google', 'login');
-    document.getElementById('atlassianLogin').onclick = () => openAuth('atlassian', 'login');
-    document.getElementById('googleConnect').onclick = () => openAuth('google', 'connect');
-    document.getElementById('atlassianConnect').onclick = () => openAuth('atlassian', 'connect');
+    document.getElementById('googleLogin').onclick = () => configured.google && openAuth('google', 'login');
+    document.getElementById('atlassianLogin').onclick = () => configured.atlassian && openAuth('atlassian', 'login');
+    document.getElementById('googleConnect').onclick = () => configured.google && !integrationProviders.has('google') && openAuth('google', 'connect');
+    document.getElementById('atlassianConnect').onclick = () => configured.atlassian && !integrationProviders.has('atlassian') && openAuth('atlassian', 'connect');
     document.getElementById('googleLogin').classList.toggle('disabled-link', !configured.google);
+    document.getElementById('googleLogin').setAttribute('aria-disabled', String(!configured.google));
+    document.getElementById('atlassianLogin').setAttribute('aria-disabled', String(!configured.atlassian));
     document.getElementById('atlassianLogin').classList.toggle('disabled-link', !configured.atlassian);
 
     const { data } = await apiRequest('/api/auth/me');
@@ -129,8 +131,12 @@ async function loadAccount() {
     integrationStatus.textContent = integrationProviders.size
       ? `Connected services: ${[...integrationProviders].join(', ')}`
       : 'No external workspaces are connected yet.';
-    document.getElementById('googleConnect').classList.toggle('disabled-link', !configured.google);
-    document.getElementById('atlassianConnect').classList.toggle('disabled-link', !configured.atlassian);
+    document.getElementById('googleConnect').classList.toggle('disabled-link', !configured.google || integrationProviders.has('google'));
+    document.getElementById('atlassianConnect').classList.toggle('disabled-link', !configured.atlassian || integrationProviders.has('atlassian'));
+    document.getElementById('googleConnect').textContent = integrationProviders.has('google') ? 'Google Drive Connected' : 'Connect Google Drive';
+    document.getElementById('atlassianConnect').textContent = integrationProviders.has('atlassian') ? 'Jira / Confluence Connected' : 'Connect Jira / Confluence';
+    document.getElementById('googleConnect').setAttribute('aria-disabled', String(!configured.google || integrationProviders.has('google')));
+    document.getElementById('atlassianConnect').setAttribute('aria-disabled', String(!configured.atlassian || integrationProviders.has('atlassian')));
     await Promise.all([loadWorkspaces(), loadProjects()]);
     if (integrationProviders.has('atlassian')) await loadJiraSites();
   } catch (error) {
@@ -979,6 +985,45 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 const apiBaseInput = document.getElementById('apiBaseInput');
 const saveApiBaseBtn = document.getElementById('saveApiBaseBtn');
 getApiBase().then((baseUrl) => { apiBaseInput.value = baseUrl; }).catch(() => {});
+document.getElementById('extensionLoginForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  try {
+    await apiRequest('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: document.getElementById('extensionLoginEmail').value.trim(),
+        password: document.getElementById('extensionLoginPassword').value
+      })
+    });
+    await loadAccount();
+  } catch (error) {
+    updateStatus(error.message);
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+document.getElementById('extensionRegisterForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  try {
+    await apiRequest('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: document.getElementById('extensionRegisterName').value.trim(),
+        email: document.getElementById('extensionRegisterEmail').value.trim(),
+        password: document.getElementById('extensionRegisterPassword').value
+      })
+    });
+    await loadAccount();
+  } catch (error) {
+    updateStatus(error.message);
+  } finally {
+    submitButton.disabled = false;
+  }
+});
 saveApiBaseBtn.addEventListener('click', async () => {
   try {
     const parsed = new URL(apiBaseInput.value.trim());

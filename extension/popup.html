@@ -30,6 +30,20 @@
       <div id="signInActions">
         <a id="googleLogin" class="button-link" target="_blank" rel="noopener">Sign in with Google</a>
         <a id="atlassianLogin" class="button-link secondary-link" target="_blank" rel="noopener">Sign in with Atlassian</a>
+        <form id="extensionLoginForm" class="compact-form">
+          <input id="extensionLoginEmail" type="email" placeholder="Email address" autocomplete="email" required />
+          <input id="extensionLoginPassword" type="password" placeholder="Password" autocomplete="current-password" required />
+          <button type="submit" class="secondary">Sign in with email</button>
+        </form>
+        <details>
+          <summary>Create an account</summary>
+          <form id="extensionRegisterForm" class="compact-form">
+            <input id="extensionRegisterName" placeholder="Full name" autocomplete="name" required />
+            <input id="extensionRegisterEmail" type="email" placeholder="Email address" autocomplete="email" required />
+            <input id="extensionRegisterPassword" type="password" minlength="8" placeholder="Password (8+ characters)" autocomplete="new-password" required />
+            <button type="submit">Create account</button>
+          </form>
+        </details>
       </div>
       <div id="signedInActions" class="hidden">
         <p><strong id="accountName"></strong> · <span id="accountEmail"></span></p>
