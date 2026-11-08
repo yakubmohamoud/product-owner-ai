@@ -11,15 +11,6 @@ function positiveIntegerFromEnv(name, fallback) {
   }
   return parsed;
 }
-const session = await stripe.checkout.sessions.create({
-  mode: 'payment',
-  client_reference_id: organizationId,
-  metadata: {
-    organization_id: organizationId,
-    type: 'managed_credits'
-  },
-  // ... line items & URLs
-});
 
 const SUPPORTED_MANAGED_CREDIT_CURRENCIES = ['gbp', 'usd', 'eur'];
 
@@ -107,553 +98,323 @@ async function createCheckoutSession(organization, user, plan) {
       throw new Error('STRIPE_PRICE_BYOK must be an active fixed monthly USD subscription price.');
     }
   }
-  const current = db.prepare('SELECT * FROM subscriptions WHERE organization_id = ?')
-    .get(organization.id);
-  let customerId = current?.stripe_customer_id;
-  if (!customerId) {
-    const customer = await stripe.customers.create({
-      email: user.email || undefined,
-      name: organization.name,
-      metadata: { organization_id: organization.id }
-    }, { idempotencyKey: `poai-customer-${organization.id}` });
-    customerId = customer.id;
-    db.prepare(`
-      INSERT INTO subscriptions (organization_id, stripe_customer_id, plan, status, updated_at)
-      VALUES (?, ?, 'free', 'active', ?)
-      ON CONFLICT(organization_id) DO UPDATE SET stripe_customer_id = excluded.stripe_customer_id
-    `).run(organization.id, customerId, new Date().toISOString());
-  }
 
-  const base = process.env.PUBLIC_BASE_URL || 'http://localhost:3000';
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
-    customer: customerId,
-    line_items: [{ price, quantity: 1 }],
-    success_url: `${base}/?billing=success`,
-    cancel_url: `${base}/?billing=cancelled`,
+    payment_method_types: ['card'],
+    customer_email: user.email,
     client_reference_id: organization.id,
-    metadata: { organization_id: organization.id, plan },
-    subscription_data: { metadata: { organization_id: organization.id, plan } }
-  }, { idempotencyKey: `poai-checkout-${organization.id}-${plan}-${Date.now()}` });
-  return { url: session.url };
+    line_items: [{ price, quantity: 1 }],
+    success_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/account.html?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/account.html`,
+    metadata: {
+      organization_id: organization.id,
+      plan
+    }
+  });
+  return session.url;
 }
 
-async function createManagedCreditsCheckout(organization, user, amount, currency = 'usd') {
-  getBillingAccount(organization.id);
+async function createManagedCreditsCheckout(organization, user, amountMinorUnits, currency = 'usd') {
   const stripe = getStripe();
   const normalizedCurrency = validateManagedCreditCurrency(currency);
-  const defaultPack = positiveIntegerFromEnv('MANAGED_CREDIT_PACK_MICRO_USD', 25_000_000);
-  const purchaseAmount = amount === undefined ? defaultPack / 1_000_000 : Number(amount);
-  const limits = { gbp: [5, 8000], usd: [5, 10000], eur: [5, 9000] };
-  if (!Number.isFinite(purchaseAmount) || purchaseAmount < limits[normalizedCurrency][0] || purchaseAmount > limits[normalizedCurrency][1]) {
-    throw new Error(`Managed API credits must be purchased for between ${limits[normalizedCurrency][0]} and ${limits[normalizedCurrency][1]} ${normalizedCurrency.toUpperCase()}.`);
+  if (!Number.isInteger(amountMinorUnits) || amountMinorUnits < 500) {
+    throw new Error('Minimum credit purchase amount is $5.00 (or equivalent).');
   }
-  if (!Number.isSafeInteger(Math.round(purchaseAmount * 100)) || !/^(\d+)(\.\d{1,2})?$/.test(String(purchaseAmount))) {
-    throw new Error('Managed API credit amount must have at most two decimal places.');
-  }
-  const minorUnits = Math.round(purchaseAmount * 100);
-  const usdPerUnit = getManagedCreditExchangeRates();
-  if (!Number.isFinite(usdPerUnit[normalizedCurrency]) || usdPerUnit[normalizedCurrency] <= 0) {
-    throw new Error('The configured currency exchange rate is invalid.');
-  }
-  const currencyValueMicroUsd = Math.round(minorUnits * 10_000 * usdPerUnit[normalizedCurrency]);
-  if (!Number.isSafeInteger(currencyValueMicroUsd) || currencyValueMicroUsd <= 0) {
-    throw new Error('Managed API credit amount is invalid.');
-  }
-  const credits = currencyValueMicroUsd;
-  const markupBps = getManagedCreditMarkupBps();
-  const markupMicroUsd = Math.round(currencyValueMicroUsd * markupBps / (10_000 + markupBps));
-  const stripeFeeEstimateMicroUsd = estimateStripeFeeMicroUsd(normalizedCurrency, minorUnits, usdPerUnit[normalizedCurrency]);
-  const purchaseBreakdown = {
-    currency: normalizedCurrency.toUpperCase(),
-    amount_minor_units: minorUnits,
-    exchange_rate_usd_per_currency_unit: usdPerUnit[normalizedCurrency],
-    currency_value_micro_usd: currencyValueMicroUsd,
-    markup_micro_usd: markupMicroUsd,
-    markup_basis_points: markupBps,
-    stripe_fee_estimate_micro_usd: stripeFeeEstimateMicroUsd,
-    credits_micro_usd: credits,
-    estimated_gross_profit_micro_usd: markupMicroUsd,
-    estimated_profit_after_processor_fee_micro_usd: markupMicroUsd - stripeFeeEstimateMicroUsd,
-    estimates: { revenue: true, processor_fee: true }
-  };
-  const current = db.prepare('SELECT stripe_customer_id FROM subscriptions WHERE organization_id = ?')
-    .get(organization.id);
-  let customerId = current?.stripe_customer_id;
-  if (!customerId) {
-    const customer = await stripe.customers.create({
-      email: user.email || undefined,
-      name: organization.name,
-      metadata: { organization_id: organization.id }
-    }, { idempotencyKey: `poai-customer-${organization.id}` });
-    customerId = customer.id;
-    db.prepare(`
-      INSERT INTO subscriptions (organization_id, stripe_customer_id, plan, status, updated_at)
-      VALUES (?, ?, 'managed', 'active', ?)
-      ON CONFLICT(organization_id) DO UPDATE SET stripe_customer_id = excluded.stripe_customer_id
-    `).run(organization.id, customerId, new Date().toISOString());
-  }
-  db.prepare(`
-    UPDATE billing_accounts SET mode = 'managed', updated_at = ? WHERE organization_id = ?
-  `).run(new Date().toISOString(), organization.id);
-  const base = process.env.PUBLIC_BASE_URL || 'http://localhost:3000';
+
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
-    customer: customerId,
+    payment_method_types: ['card'],
+    customer_email: user.email,
+    client_reference_id: organization.id,
     line_items: [{
       price_data: {
         currency: normalizedCurrency,
-        unit_amount: minorUnits,
-        product_data: { name: 'Product Owner AI managed API credits' }
+        product_data: {
+          name: 'Product Owner AI Managed Credits',
+          description: 'Pre-paid API managed generation credits'
+        },
+        unit_amount: amountMinorUnits
       },
       quantity: 1
     }],
-    success_url: `${base}/?billing=credits-added`,
-    cancel_url: `${base}/?billing=cancelled`,
-    client_reference_id: organization.id,
+    success_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/account.html?credits_purchased=true`,
+    cancel_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/account.html`,
     metadata: {
       organization_id: organization.id,
-      purpose: 'managed_api_credits',
-      credits_micro_usd: String(credits),
-      currency_value_micro_usd: String(currencyValueMicroUsd),
-      charge_value_micro_usd: String(currencyValueMicroUsd),
-      purchase_breakdown: JSON.stringify(purchaseBreakdown)
+      type: 'managed_credits',
+      amount_minor_units: String(amountMinorUnits),
+      currency: normalizedCurrency
     }
-  }, { idempotencyKey: `poai-credits-${organization.id}-${normalizedCurrency}-${minorUnits}` });
-  return { url: session.url, credits_micro_usd: credits, breakdown: purchaseBreakdown };
-}
-
-async function createBillingPortal(organizationId) {
-  const stripe = getStripe();
-  const current = db.prepare('SELECT stripe_customer_id FROM subscriptions WHERE organization_id = ?')
-    .get(organizationId);
-  if (!current?.stripe_customer_id) throw new Error('This workspace has no billing account yet.');
-  const portal = await stripe.billingPortal.sessions.create({
-    customer: current.stripe_customer_id,
-    return_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/`
   });
-  return { url: portal.url };
+  return session.url;
 }
 
-function planForPrice(priceId) {
-  if (priceId && priceId === process.env.STRIPE_PRICE_BYOK) return 'byok';
-  if (priceId && priceId === process.env.STRIPE_PRICE_TEAM) return 'team';
-  if (priceId && priceId === process.env.STRIPE_PRICE_BUSINESS) return 'business';
-  if (priceId && priceId === process.env.STRIPE_PRICE_PAYG) return 'payg';
-  return null;
-}
-
-function applyManagedCredit(organizationId, amountMicroUsd, referenceId) {
-  if (!Number.isSafeInteger(amountMicroUsd) || amountMicroUsd <= 0) {
-    throw new Error('Managed API credit amount must be a positive integer in micro-USD.');
+async function createBillingPortal(organization) {
+  const stripe = getStripe();
+  const account = getBillingAccount(organization.id);
+  if (!account.stripe_customer_id) {
+    throw new Error('No active Stripe customer found for this organization.');
   }
-  const now = new Date().toISOString();
-  const id = createId();
-  const insert = db.prepare(`
-    INSERT OR IGNORE INTO billing_ledger
-      (id, organization_id, entry_type, amount_micro_usd, reference_id, description, created_at)
-    VALUES (?, ?, 'credit', ?, ?, 'Managed API credit purchase', ?)
-  `).run(id, organizationId, amountMicroUsd, referenceId, now);
-  if (insert.changes === 0) return false;
-  db.prepare(`
-    INSERT INTO billing_accounts (organization_id, mode, balance_micro_usd, updated_at)
-    VALUES (?, 'managed', ?, ?)
-    ON CONFLICT(organization_id) DO UPDATE SET
-      mode = 'managed',
-      balance_micro_usd = billing_accounts.balance_micro_usd + excluded.balance_micro_usd,
-      updated_at = excluded.updated_at
-  `).run(organizationId, amountMicroUsd, now);
-  return true;
-}
-
-function persistSubscription(data) {
-  const organizationId = data.metadata?.organization_id;
-  if (!organizationId) throw new Error('Stripe subscription metadata is missing organization_id.');
-  const priceId = data.items?.data?.[0]?.price?.id;
-  const plan = data.metadata?.plan || planForPrice(priceId);
-  if (!plan || !['byok', 'team', 'business', 'payg'].includes(plan)) {
-    throw new Error('Stripe subscription uses an unrecognized plan price.');
-  }
-  db.prepare(`
-    INSERT INTO subscriptions
-      (organization_id, stripe_customer_id, stripe_subscription_id, plan, status, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(organization_id) DO UPDATE SET
-      stripe_customer_id = excluded.stripe_customer_id,
-      stripe_subscription_id = excluded.stripe_subscription_id,
-      plan = excluded.plan,
-      status = excluded.status,
-      updated_at = excluded.updated_at
-  `).run(
-    organizationId,
-    typeof data.customer === 'string' ? data.customer : data.customer?.id,
-    data.id,
-    plan,
-    data.status || 'active',
-    new Date().toISOString()
-  );
-  if (plan === 'byok') {
-    db.prepare(`
-      INSERT INTO billing_accounts (organization_id, mode, updated_at)
-      VALUES (?, 'byok', ?)
-      ON CONFLICT(organization_id) DO UPDATE SET mode = 'byok', updated_at = excluded.updated_at
-    `).run(organizationId, new Date().toISOString());
-  }
+  const session = await stripe.billingPortal.sessions.create({
+    customer: account.stripe_customer_id,
+    return_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/account.html`
+  });
+  return session.url;
 }
 
 function processStripeEvent(event) {
-  const process = db.transaction(() => {
-    if (db.prepare('SELECT 1 FROM stripe_events WHERE event_id = ?').get(event.id)) return false;
+  const accountId = event.id;
+  const existing = db.prepare('SELECT id FROM stripe_processed_events WHERE id = ?').get(accountId);
+  if (existing) return false;
 
-    if (event.type === 'customer.subscription.created' ||
-      event.type === 'customer.subscription.updated' ||
-      event.type === 'customer.subscription.deleted') {
-      persistSubscription(event.data.object);
-      if (event.type === 'customer.subscription.deleted') {
-        db.prepare(`
-          UPDATE subscriptions SET plan = 'free', status = 'active', updated_at = ?
-          WHERE stripe_subscription_id = ?
-        `).run(new Date().toISOString(), event.data.object.id);
-        db.prepare(`
-          UPDATE billing_accounts SET mode = 'managed', updated_at = ?
-          WHERE organization_id = ?
-        `).run(new Date().toISOString(), event.data.object.metadata?.organization_id);
-      }
-    } else if (event.type === 'checkout.session.completed' ||
-      event.type === 'checkout.session.async_payment_succeeded') {
+  db.transaction(() => {
+    db.prepare('INSERT INTO stripe_processed_events (id, created_at) VALUES (?, ?)').run(
+      accountId,
+      new Date().toISOString()
+    );
+
+    if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
-      if (session.mode === 'subscription' && session.metadata?.organization_id) {
-        db.prepare(`
-          UPDATE subscriptions SET stripe_customer_id = ?, stripe_subscription_id = ?, plan = ?, status = 'active', updated_at = ?
-          WHERE organization_id = ?
-        `).run(
-          typeof session.customer === 'string' ? session.customer : session.customer?.id,
-          typeof session.subscription === 'string' ? session.subscription : session.subscription?.id,
-          ['byok', 'team', 'business', 'payg'].includes(session.metadata.plan)
-            ? session.metadata.plan
-            : 'free',
-          new Date().toISOString(),
-          session.metadata.organization_id
-        );
-        if (session.metadata.plan === 'byok') {
+      const organizationId = session.client_reference_id || session.metadata?.organization_id;
+
+      if (organizationId) {
+        getBillingAccount(organizationId);
+
+        if (session.customer) {
           db.prepare(`
-            INSERT INTO billing_accounts (organization_id, mode, updated_at)
-            VALUES (?, 'byok', ?)
-            ON CONFLICT(organization_id) DO UPDATE SET mode = 'byok', updated_at = excluded.updated_at
-          `).run(session.metadata.organization_id, new Date().toISOString());
+            UPDATE billing_accounts
+            SET stripe_customer_id = ?, updated_at = ?
+            WHERE organization_id = ?
+          `).run(session.customer, new Date().toISOString(), organizationId);
         }
-      } else if (session.mode === 'payment' &&
-        session.metadata?.purpose === 'managed_api_credits' &&
-        session.metadata.organization_id &&
-        session.payment_status === 'paid') {
-        const amount = Number.parseInt(session.metadata.charge_value_micro_usd || session.metadata.credits_micro_usd, 10);
-        if (!Number.isSafeInteger(amount) || amount <= 0) {
-          throw new Error('Managed API credit checkout has an invalid charge value.');
+
+        if (session.subscription) {
+          db.prepare(`
+            UPDATE billing_accounts
+            SET stripe_subscription_id = ?, plan = ?, status = 'active', updated_at = ?
+            WHERE organization_id = ?
+          `).run(
+            session.subscription,
+            session.metadata?.plan || 'byok',
+            new Date().toISOString(),
+            organizationId
+          );
         }
-        applyManagedCredit(
-          session.metadata.organization_id,
-          amount,
-          session.id || event.id
-        );
+
+        if (session.metadata?.type === 'managed_credits' || session.mode === 'payment') {
+          const amountTotal = session.amount_total || 0;
+          const currency = (session.currency || 'usd').toLowerCase();
+          const rates = getManagedCreditExchangeRates();
+          const rateToUsd = rates[currency] || 1;
+          const totalUsdMicro = Math.round(amountTotal * rateToUsd * 10000);
+
+          db.prepare(`
+            UPDATE billing_accounts
+            SET managed_credit_balance_micro_usd = managed_credit_balance_micro_usd + ?,
+                updated_at = ?
+            WHERE organization_id = ?
+          `).run(totalUsdMicro, new Date().toISOString(), organizationId);
+        }
+      }
+    } else if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
+      const subscription = event.data.object;
+      const account = db.prepare('SELECT organization_id FROM billing_accounts WHERE stripe_subscription_id = ?').get(subscription.id);
+      if (account) {
+        db.prepare(`
+          UPDATE billing_accounts
+          SET status = ?, updated_at = ?
+          WHERE organization_id = ?
+        `).run(subscription.status, new Date().toISOString(), account.organization_id);
       }
     }
+  })();
 
-    db.prepare('INSERT INTO stripe_events (event_id, processed_at) VALUES (?, ?)')
-      .run(event.id, new Date().toISOString());
-    return true;
-  });
-  return process();
+  return true;
 }
 
-async function reportMeteredUsage(organizationId, eventId, units) {
-  if (!process.env.STRIPE_METER_EVENT_NAME) {
-    throw new Error('STRIPE_METER_EVENT_NAME must match the configured Stripe usage meter.');
-  }
-  const stripe = getStripe();
-  const subscription = db.prepare('SELECT stripe_customer_id FROM subscriptions WHERE organization_id = ?')
-    .get(organizationId);
-  if (!subscription?.stripe_customer_id) throw new Error('Pay-as-you-go workspace has no Stripe customer.');
-  await stripe.billing.meterEvents.create({
-    event_name: process.env.STRIPE_METER_EVENT_NAME,
-    payload: {
-      stripe_customer_id: subscription.stripe_customer_id,
-      value: String(units)
-    },
-    identifier: eventId
-  });
-}
-
-function recordUsage(organizationId, userId, eventType, units, billable, source) {
+function recordUsage(organizationId, userId, eventType, units = 1, billable = true, sourceMode = 'byok') {
   const id = createId();
-  const now = new Date().toISOString();
-  const insert = db.transaction(() => {
+  const timestamp = new Date().toISOString();
+  db.transaction(() => {
     db.prepare(`
-      INSERT INTO usage_events (id, organization_id, user_id, event_type, units, billable, source, created_at)
+      INSERT INTO usage_events (id, organization_id, user_id, event_type, units, billable, source_mode, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, organizationId, userId, eventType, units, billable ? 1 : 0, source, now);
-    const subscription = db.prepare('SELECT plan FROM subscriptions WHERE organization_id = ?').get(organizationId);
-    if (billable && subscription?.plan === 'payg') {
+    `).run(id, organizationId, userId, eventType, units, billable ? 1 : 0, sourceMode, timestamp);
+
+    if (billable) {
       db.prepare(`
-        INSERT INTO billing_outbox (usage_event_id, next_attempt_at, updated_at)
-        VALUES (?, ?, ?)
-      `).run(id, now, now);
+        INSERT INTO billing_outbox (usage_event_id, status, attempts, next_attempt_at, created_at, updated_at)
+        VALUES (?, 'pending', 0, ?, ?, ?)
+      `).run(id, timestamp, timestamp, timestamp);
     }
-  });
-  insert();
+  })();
   return id;
 }
 
-function getLlmRates(model = process.env.OPENAI_MODEL || 'gpt-4o-mini') {
-  let input = positiveIntegerFromEnv('LLM_INPUT_COST_MICRO_USD_PER_MILLION', 150_000);
-  let output = positiveIntegerFromEnv('LLM_OUTPUT_COST_MICRO_USD_PER_MILLION', 600_000);
-  if (process.env.LLM_MODEL_PRICING_JSON) {
-    let pricing;
-    try {
-      pricing = JSON.parse(process.env.LLM_MODEL_PRICING_JSON);
-    } catch (error) {
-      throw new Error('LLM_MODEL_PRICING_JSON must contain valid JSON.', { cause: error });
-    }
-    if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing)) {
-      throw new Error('LLM_MODEL_PRICING_JSON must be a JSON object keyed by model name.');
-    }
-    const modelPricing = pricing[model];
-    if (modelPricing !== undefined) {
-      if (!Number.isSafeInteger(modelPricing.input_micro_usd_per_million) ||
-        modelPricing.input_micro_usd_per_million < 0 ||
-        !Number.isSafeInteger(modelPricing.output_micro_usd_per_million) ||
-        modelPricing.output_micro_usd_per_million < 0) {
-        throw new Error(`LLM model pricing for ${model} must provide non-negative integer input/output rates.`);
-      }
-      input = modelPricing.input_micro_usd_per_million;
-      output = modelPricing.output_micro_usd_per_million;
-    }
-  }
-  const markupBps = positiveIntegerFromEnv('MANAGED_LLM_MARKUP_BPS', 3000);
-  if (markupBps <= 0 || markupBps > 100_000) {
-    throw new Error('MANAGED_LLM_MARKUP_BPS must be between 1 and 100000.');
-  }
+async function reportMeteredUsage(organizationId, usageEventId, units) {
+  const account = getBillingAccount(organizationId);
+  if (!account.stripe_subscription_id) return;
+  const stripe = getStripe();
+  const subscription = await stripe.subscriptions.retrieve(account.stripe_subscription_id);
+  const subscriptionItem = subscription.items.data[0];
+  if (!subscriptionItem) return;
+
+  await stripe.subscriptionItems.createUsageRecord(subscriptionItem.id, {
+    quantity: units,
+    timestamp: Math.floor(Date.now() / 1000),
+    action: 'increment'
+  });
+}
+
+function getLlmRates() {
   return {
-    input,
-    output,
-    markupBps,
-    inputSellingRate: Math.ceil(input * (10_000 + markupBps) / 10_000),
-    outputSellingRate: Math.ceil(output * (10_000 + markupBps) / 10_000)
+    gpt4o: { input_micro_usd_per_1k: 2500, output_micro_usd_per_1k: 10000 },
+    gpt4o_mini: { input_micro_usd_per_1k: 150, output_micro_usd_per_1k: 600 }
   };
 }
 
-function calculateLlmCost(inputTokens, outputTokens, rate) {
-  return Math.ceil(
-    (inputTokens * rate.input + outputTokens * rate.output) / 1_000_000
+function estimateManagedReservation(model = 'gpt-4o', estimatedInputTokens = 2000, estimatedOutputTokens = 1000) {
+  const modelKey = model.includes('mini') ? 'gpt4o_mini' : 'gpt4o';
+  const rates = getLlmRates()[modelKey];
+  const costMicroUsd = Math.round(
+    (estimatedInputTokens / 1000) * rates.input_micro_usd_per_1k +
+    (estimatedOutputTokens / 1000) * rates.output_micro_usd_per_1k
   );
+  const markupBps = getManagedCreditMarkupBps();
+  return Math.round(costMicroUsd * (1 + markupBps / 10000));
 }
 
-function estimateManagedReservation(context, callCount) {
-  if (!Number.isInteger(callCount) || callCount < 1) {
-    throw new Error('LLM reservation requires at least one generation call.');
-  }
-  const rates = getLlmRates();
-  const configuredMaxOutput = Number(process.env.MANAGED_MAX_OUTPUT_TOKENS || 4096);
-  if (!Number.isSafeInteger(configuredMaxOutput) || configuredMaxOutput <= 0) {
-    throw new Error('MANAGED_MAX_OUTPUT_TOKENS must be a positive integer.');
-  }
-  const maxOutputTokens = Math.min(configuredMaxOutput, 16384);
-  const estimatedInputTokensPerCall = String(context || '').length + 4000;
-  const estimatedCost = calculateLlmCost(
-    estimatedInputTokensPerCall * callCount,
-    maxOutputTokens * callCount,
-    { input: rates.inputSellingRate, output: rates.outputSellingRate }
-  );
-  return Math.max(1, estimatedCost);
-}
-
-function reserveManagedCredits(organizationId, userId, requestId, amountMicroUsd) {
-  if (!Number.isSafeInteger(amountMicroUsd) || amountMicroUsd <= 0) {
-    throw new Error('Managed API reservation must be a positive integer.');
-  }
+function reserveManagedCredits(organizationId, estimatedAmountMicroUsd) {
   const account = getBillingAccount(organizationId);
-  if (account.mode !== 'managed') {
-    throw new Error('The organization is not using managed API billing.');
+  const availableBalance = account.managed_credit_balance_micro_usd - account.managed_credit_reserved_micro_usd;
+
+  if (availableBalance < estimatedAmountMicroUsd) {
+    throw new Error('Insufficient managed credit balance. Please top up your account balance.');
   }
-  const now = new Date().toISOString();
-  const reserve = db.transaction(() => {
-    const update = db.prepare(`
-      UPDATE billing_accounts
-      SET reserved_micro_usd = reserved_micro_usd + ?, updated_at = ?
-      WHERE organization_id = ? AND mode = 'managed'
-        AND balance_micro_usd - reserved_micro_usd >= ?
-    `).run(amountMicroUsd, now, organizationId, amountMicroUsd);
-    if (!update.changes) {
-      throw new Error('Managed API credit balance is too low for this request. Add credits or switch to BYOK.');
-    }
+
+  const reservationId = createId();
+  const timestamp = new Date().toISOString();
+
+  db.transaction(() => {
     db.prepare(`
-      INSERT INTO billing_reservations
-        (request_id, organization_id, user_id, remaining_micro_usd, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(requestId, organizationId, userId, amountMicroUsd, now);
-  });
-  reserve();
+      UPDATE billing_accounts
+      SET managed_credit_reserved_micro_usd = managed_credit_reserved_micro_usd + ?,
+          updated_at = ?
+      WHERE organization_id = ?
+    `).run(estimatedAmountMicroUsd, timestamp, organizationId);
+
+    db.prepare(`
+      INSERT INTO managed_credit_reservations (id, organization_id, reserved_micro_usd, status, created_at, updated_at)
+      VALUES (?, ?, ?, 'reserved', ?, ?)
+    `).run(reservationId, organizationId, estimatedAmountMicroUsd, timestamp, timestamp);
+  })();
+
+  return reservationId;
 }
 
-function recordLlmUsage(organizationId, userId, requestId, mode, usage) {
-  const inputTokens = usage.inputTokens;
-  const outputTokens = usage.outputTokens;
-  if (!Number.isSafeInteger(inputTokens) || inputTokens < 0 ||
-    !Number.isSafeInteger(outputTokens) || outputTokens < 0) {
-    throw new Error('LLM provider response did not include exact input and output token counts.');
-  }
-  const totalTokens = usage.totalTokens ?? inputTokens + outputTokens;
-  if (!Number.isSafeInteger(totalTokens) || totalTokens < inputTokens + outputTokens) {
-    throw new Error('LLM provider response included invalid total token usage.');
-  }
-  const model = typeof usage.model === 'string' && usage.model.trim()
-    ? usage.model.trim()
-    : '';
-  const provider = typeof usage.provider === 'string' && usage.provider.trim()
-    ? usage.provider.trim()
-    : 'openai';
-  if (!model) throw new Error('LLM provider response did not identify the model used.');
+function recordLlmUsage(organizationId, userId, reservationId, model, promptTokens, completionTokens) {
+  const modelKey = model.includes('mini') ? 'gpt4o_mini' : 'gpt4o';
+  const rates = getLlmRates()[modelKey];
+  const rawCostMicroUsd = Math.round(
+    (promptTokens / 1000) * rates.input_micro_usd_per_1k +
+    (completionTokens / 1000) * rates.output_micro_usd_per_1k
+  );
+  const markupBps = getManagedCreditMarkupBps();
+  const finalChargeMicroUsd = Math.round(rawCostMicroUsd * (1 + markupBps / 10000));
+  const timestamp = new Date().toISOString();
 
-  const rates = getLlmRates(usage.pricingModel || model);
-  const cost = calculateLlmCost(inputTokens, outputTokens, rates);
-  const charge = mode === 'managed'
-    ? calculateLlmCost(inputTokens, outputTokens, {
-      input: rates.inputSellingRate,
-      output: rates.outputSellingRate
-    })
-    : 0;
-  const id = createId();
-  const now = new Date().toISOString();
-  const insert = db.transaction(() => {
-    if (mode === 'managed') {
-      const reservation = db.prepare(`
-        SELECT remaining_micro_usd FROM billing_reservations
-        WHERE request_id = ? AND organization_id = ? AND user_id = ?
-      `).get(requestId, organizationId, userId);
-      if (!reservation || reservation.remaining_micro_usd < charge) {
-        throw new Error('Managed API request exceeded its reserved credit balance.');
-      }
-      const debit = db.prepare(`
-        UPDATE billing_accounts
-        SET balance_micro_usd = balance_micro_usd - ?,
-          reserved_micro_usd = reserved_micro_usd - ?, updated_at = ?
-        WHERE organization_id = ? AND balance_micro_usd >= ? AND reserved_micro_usd >= ?
-      `).run(charge, charge, now, organizationId, charge, charge);
-      if (!debit.changes) throw new Error('Managed API credit balance changed before settlement.');
-      const updateReservation = db.prepare(`
-        UPDATE billing_reservations SET remaining_micro_usd = remaining_micro_usd - ?
-        WHERE request_id = ? AND organization_id = ?
-      `).run(charge, requestId, organizationId);
-      if (!updateReservation.changes) throw new Error('Managed API credit reservation disappeared before settlement.');
-      if (charge > 0) {
+  db.transaction(() => {
+    let reservedMicroUsd = 0;
+    if (reservationId) {
+      const res = db.prepare('SELECT reserved_micro_usd FROM managed_credit_reservations WHERE id = ?').get(reservationId);
+      if (res) {
+        reservedMicroUsd = res.reserved_micro_usd;
         db.prepare(`
-          INSERT INTO billing_ledger
-            (id, organization_id, user_id, entry_type, amount_micro_usd, reference_id, description, created_at)
-          VALUES (?, ?, ?, 'debit', ?, ?, 'Managed LLM generation with configured markup', ?)
-        `).run(createId(), organizationId, userId, charge, id, now);
+          UPDATE managed_credit_reservations
+          SET status = 'fulfilled', updated_at = ?
+          WHERE id = ?
+        `).run(timestamp, reservationId);
       }
     }
+
     db.prepare(`
-      INSERT INTO llm_usage (
-        id, organization_id, user_id, request_id, provider, model,
-        input_tokens, output_tokens, total_tokens,
-        input_rate_micro_usd_per_million, output_rate_micro_usd_per_million,
-        cost_micro_usd, charged_micro_usd, billing_mode, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      organizationId,
-      userId,
-      requestId,
-      provider,
-      model,
-      inputTokens,
-      outputTokens,
-      totalTokens,
-      rates.input,
-      rates.output,
-      cost,
-      charge,
-      mode,
-      now
-    );
-  });
-  insert();
-  return { id, cost_micro_usd: cost, charged_micro_usd: charge };
-}
-
-function releaseManagedReservation(requestId, organizationId) {
-  const release = db.transaction(() => {
-    const reservation = db.prepare(`
-      SELECT remaining_micro_usd FROM billing_reservations
-      WHERE request_id = ? AND organization_id = ?
-    `).get(requestId, organizationId);
-    if (!reservation) return;
-    const update = db.prepare(`
       UPDATE billing_accounts
-      SET reserved_micro_usd = reserved_micro_usd - ?, updated_at = ?
-      WHERE organization_id = ? AND reserved_micro_usd >= ?
-    `).run(reservation.remaining_micro_usd, new Date().toISOString(), organizationId, reservation.remaining_micro_usd);
-    if (!update.changes) throw new Error('Managed API credit reservation could not be released.');
-    db.prepare('DELETE FROM billing_reservations WHERE request_id = ?').run(requestId);
-  });
-  release();
+      SET managed_credit_balance_micro_usd = MAX(0, managed_credit_balance_micro_usd - ?),
+          managed_credit_reserved_micro_usd = MAX(0, managed_credit_reserved_micro_usd - ?),
+          updated_at = ?
+      WHERE organization_id = ?
+    `).run(finalChargeMicroUsd, reservedMicroUsd, timestamp, organizationId);
+
+    db.prepare(`
+      INSERT INTO llm_usage_logs (id, organization_id, user_id, model, prompt_tokens, completion_tokens, charge_micro_usd, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(createId(), organizationId, userId, model, promptTokens, completionTokens, finalChargeMicroUsd, timestamp);
+  })();
+
+  return finalChargeMicroUsd;
 }
 
-function cleanupExpiredReservations(maxAgeMs = 24 * 60 * 60 * 1000) {
-  const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
-  const rows = db.prepare(`
-    SELECT request_id, organization_id, remaining_micro_usd FROM billing_reservations
-    WHERE created_at <= ?
-  `).all(cutoff);
-  const cleanup = db.transaction(() => {
-    for (const row of rows) {
+function releaseManagedReservation(organizationId, reservationId) {
+  if (!reservationId) return;
+  const timestamp = new Date().toISOString();
+
+  db.transaction(() => {
+    const res = db.prepare('SELECT reserved_micro_usd, status FROM managed_credit_reservations WHERE id = ?').get(reservationId);
+    if (res && res.status === 'reserved') {
+      db.prepare(`
+        UPDATE managed_credit_reservations
+        SET status = 'released', updated_at = ?
+        WHERE id = ?
+      `).run(timestamp, reservationId);
+
       db.prepare(`
         UPDATE billing_accounts
-        SET reserved_micro_usd = MAX(0, reserved_micro_usd - ?), updated_at = ?
+        SET managed_credit_reserved_micro_usd = MAX(0, managed_credit_reserved_micro_usd - ?),
+            updated_at = ?
         WHERE organization_id = ?
-      `).run(row.remaining_micro_usd, new Date().toISOString(), row.organization_id);
-      db.prepare('DELETE FROM billing_reservations WHERE request_id = ?').run(row.request_id);
+      `).run(res.reserved_micro_usd, timestamp, organizationId);
     }
-  });
-  cleanup();
-  return rows.length;
+  })();
+}
+
+function cleanupExpiredReservations() {
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const expired = db.prepare(`
+    SELECT id, organization_id, reserved_micro_usd
+    FROM managed_credit_reservations
+    WHERE status = 'reserved' AND created_at <= ?
+  `).all(oneHourAgo);
+
+  for (const item of expired) {
+    releaseManagedReservation(item.organization_id, item.id);
+  }
 }
 
 function setBillingMode(organizationId, mode) {
   if (!['byok', 'managed'].includes(mode)) {
-    throw new Error('Billing mode must be byok or managed.');
-  }
-  const account = getBillingAccount(organizationId);
-  if (mode === 'byok') {
-    const subscription = db.prepare(`
-      SELECT plan, status FROM subscriptions WHERE organization_id = ?
-    `).get(organizationId);
-    if (subscription?.plan !== 'byok' || !['active', 'trialing'].includes(subscription.status)) {
-      throw new Error('An active BYOK platform-fee subscription is required before switching to BYOK.');
-    }
-  } else if (account.balance_micro_usd <= account.reserved_micro_usd) {
-    throw new Error('Add managed API credits before switching to managed billing.');
+    throw new Error("Billing mode must be 'byok' or 'managed'.");
   }
   db.prepare(`
-    UPDATE billing_accounts SET mode = ?, updated_at = ? WHERE organization_id = ?
+    UPDATE billing_accounts
+    SET mode = ?, updated_at = ?
+    WHERE organization_id = ?
   `).run(mode, new Date().toISOString(), organizationId);
-  return getBillingAccount(organizationId);
 }
 
-function getLlmUsage(organizationId, limit = 100) {
-  const safeLimit = Math.min(500, Math.max(1, Number.isInteger(limit) ? limit : 100));
+function getLlmUsage(organizationId) {
   return db.prepare(`
-    SELECT user_id, request_id, provider, model, input_tokens, output_tokens, total_tokens,
-      cost_micro_usd, charged_micro_usd, billing_mode, created_at
-    FROM llm_usage WHERE organization_id = ?
-    ORDER BY created_at DESC LIMIT ?
-  `).all(organizationId, safeLimit);
+    SELECT SUM(prompt_tokens) as total_prompt_tokens,
+           SUM(completion_tokens) as total_completion_tokens,
+           SUM(charge_micro_usd) as total_charge_micro_usd
+    FROM llm_usage_logs
+    WHERE organization_id = ?
+  `).get(organizationId);
 }
 
 let draining = false;
-
 async function drainBillingOutbox() {
-  if (draining || !process.env.STRIPE_METER_EVENT_NAME || !process.env.STRIPE_SECRET_KEY) return;
+  if (draining) return;
   draining = true;
   try {
     const due = db.prepare(`
