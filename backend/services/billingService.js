@@ -11,6 +11,15 @@ function positiveIntegerFromEnv(name, fallback) {
   }
   return parsed;
 }
+const session = await stripe.checkout.sessions.create({
+  mode: 'payment',
+  client_reference_id: organizationId,
+  metadata: {
+    organization_id: organizationId,
+    type: 'managed_credits'
+  },
+  // ... line items & URLs
+});
 
 const SUPPORTED_MANAGED_CREDIT_CURRENCIES = ['gbp', 'usd', 'eur'];
 
