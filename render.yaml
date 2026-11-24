@@ -29,6 +29,10 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: OPENAI_IDENTITY_PROVIDER_ID
+        sync: false
+      - key: OPENAI_SERVICE_ACCOUNT_ID
+        sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET

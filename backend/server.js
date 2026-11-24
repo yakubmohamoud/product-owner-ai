@@ -43,9 +43,11 @@ const {
 const {
   orchestrateArtifacts,
   createRequestAgentClient,
+  hasManagedOpenAIAuth,
   answerProductQuestion,
   generateMeetingAgenda
 } = require('./services/agentOrchestrator');
+const { getManagedOpenAIAuthToken } = require('./services/openaiWorkloadIdentity');
 const { buildStandupDraft } = require('./services/teamWorkflowService');
 const { createRateLimiter } = require('./services/rateLimitService');
 const { log, logError } = require('./services/logger');
@@ -68,6 +70,7 @@ const {
   getLlmUsage,
   createManagedCreditsCheckout,
   getManagedCreditConfig,
+  convertManagedCreditAmountToMinorUnits,
   cleanupExpiredReservations
 } = require('./services/billingService');
 const standupService = require('./services/standupService');
@@ -236,7 +239,7 @@ function enforceUsage(req, res, next) {
       return res.status(402).json({ error: 'Add your OpenAI API key in your profile to use BYOK billing.' });
     }
   } else {
-    if (!process.env.OPENAI_API_KEY) {
+    if (!hasManagedOpenAIAuth()) {
       req.agentApiKey = null;
       return next();
     }
@@ -344,6 +347,9 @@ app.post('/api/webhooks/slack', (req, res) => {
 });
 
 app.get('/api/auth/providers', (_req, res) => {
+  const stripeCheckoutConfigured = Boolean(
+    process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET
+  );
   res.json({
     google: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
     atlassian: Boolean(
@@ -354,12 +360,13 @@ app.get('/api/auth/providers', (_req, res) => {
     zoom: Boolean(process.env.ZOOM_CLIENT_ID && process.env.ZOOM_CLIENT_SECRET),
     microsoft: Boolean(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET),
     stripe: Boolean(process.env.STRIPE_SECRET_KEY),
+    stripeWebhookConfigured: Boolean(process.env.STRIPE_WEBHOOK_SECRET),
     prices: {
-      byok: Boolean(process.env.STRIPE_PRICE_BYOK),
-      managedCredits: Boolean(process.env.STRIPE_SECRET_KEY),
-      team: Boolean(process.env.STRIPE_PRICE_TEAM),
-      business: Boolean(process.env.STRIPE_PRICE_BUSINESS),
-      payg: Boolean(process.env.STRIPE_PRICE_PAYG)
+      byok: stripeCheckoutConfigured && Boolean(process.env.STRIPE_PRICE_BYOK),
+      managedCredits: stripeCheckoutConfigured,
+      team: stripeCheckoutConfigured && Boolean(process.env.STRIPE_PRICE_TEAM),
+      business: stripeCheckoutConfigured && Boolean(process.env.STRIPE_PRICE_BUSINESS),
+      payg: stripeCheckoutConfigured && Boolean(process.env.STRIPE_PRICE_PAYG && process.env.STRIPE_METER_EVENT_NAME)
     },
     managedCreditConfig: getManagedCreditConfig()
   });
@@ -777,7 +784,16 @@ app.post('/api/meetings/transcribe-media', requireAuthentication, requireCsrf, a
     if (!buffer.length || buffer.length > 100 * 1024 * 1024) return res.status(400).json({ error: 'Recording must be between 1 byte and 100 MB.' });
     const credentials = readUserCredentials(req.auth.user_id).find((entry) => entry.provider === 'openai');
     const apiKey = process.env.OPENAI_API_KEY || credentials?.values?.api_key;
-    if (!apiKey) return res.status(402).json({ error: 'Configure an OpenAI API key to transcribe recordings.' });
+    let accessToken;
+    try {
+      accessToken = apiKey || await getManagedOpenAIAuthToken();
+    } catch (error) {
+      logError('openai_workload_identity_auth_failed', error);
+      return res.status(502).json({ error: 'OpenAI workload identity authentication failed.' });
+    }
+    if (!accessToken) {
+      return res.status(402).json({ error: 'Configure OpenAI API key or workload identity to transcribe recordings.' });
+    }
 
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'poai-media-'));
     const input = path.join(directory, file.name.replace(/[^a-zA-Z0-9_.-]/g, '_'));
@@ -793,7 +809,7 @@ app.post('/api/meetings/transcribe-media', requireAuthentication, requireCsrf, a
     form.append('file', new Blob([audio], { type: 'audio/mpeg' }), 'audio.mp3');
     form.append('model', process.env.OPENAI_TRANSCRIPTION_MODEL || 'whisper-1');
     const transcription = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form,
+      method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form,
       signal: AbortSignal.timeout(120000)
     });
     const payload = await transcription.json();
@@ -1024,7 +1040,9 @@ app.post('/api/billing/checkout', requireAuthentication, requireCsrf, async (req
   try {
     const workspace = { id: req.auth.organization_id, name: req.auth.organization_name };
     const user = { email: req.auth.email };
-    res.json(await createCheckoutSession(workspace, user, req.body?.plan));
+    const url = await createCheckoutSession(workspace, user, req.body?.plan);
+    if (typeof url !== 'string' || !url) throw new Error('Stripe did not return a checkout URL.');
+    res.json({ url });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -1035,7 +1053,9 @@ app.post('/api/billing/portal', requireAuthentication, requireCsrf, async (req, 
     return res.status(403).json({ error: 'Only Company Admins can manage billing.' });
   }
   try {
-    res.json(await createBillingPortal(req.auth.organization_id));
+    const url = await createBillingPortal(req.auth.organization_id);
+    if (typeof url !== 'string' || !url) throw new Error('Stripe did not return a billing portal URL.');
+    res.json({ url });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -1051,9 +1071,11 @@ app.post('/api/billing/credits/checkout', requireAuthentication, requireCsrf, as
       name: req.auth.organization_name
     };
     const user = { email: req.auth.email };
-    const amount = typeof req.body?.amount === 'number' ? req.body.amount : undefined;
     const currency = typeof req.body?.currency === 'string' ? req.body.currency : 'usd';
-    res.json(await createManagedCreditsCheckout(organization, user, amount, currency));
+    const amount = convertManagedCreditAmountToMinorUnits(req.body?.amount, currency);
+    const url = await createManagedCreditsCheckout(organization, user, amount, currency);
+    if (typeof url !== 'string' || !url) throw new Error('Stripe did not return a checkout URL.');
+    res.json({ url });
   } catch (error) {
     logError('managed_credit_checkout_failed', error, { request_id: req.requestId });
     res.status(400).json({ error: error.message });

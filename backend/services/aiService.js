@@ -1,8 +1,9 @@
 const OpenAI = require('openai');
 const { wrapAgentClient } = require('./llmTelemetry');
 const { logError } = require('./logger');
+const { createOpenAIClient } = require('./openaiWorkloadIdentity');
 
-const client = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+const client = createOpenAIClient(OpenAI);
 
 function sanitizeJson(value, fallback) {
   if (!value || typeof value !== 'object') return fallback;

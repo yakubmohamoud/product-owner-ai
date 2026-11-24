@@ -146,7 +146,6 @@ async function start() {
       const button = document.getElementById(buttonId);
       if (button) button.disabled = !enabled;
     }
-
     const account = await request('/api/auth/me');
     csrf = account.csrf_token || '';
     document.getElementById('login').hidden = true;
@@ -219,9 +218,15 @@ async function start() {
     });
     creditAmount.addEventListener('input', updateEstimate);
     updateEstimate();
+    if (!configured.prices.managedCredits) {
+      document.getElementById('creditPurchaseEstimate').textContent =
+        'Managed credit checkout is unavailable until Stripe and its webhook signing secret are configured.';
+    }
     document.getElementById('manageBilling').onclick = async () => {
       try {
-        location.href = (await request('/api/billing/portal', 'POST', {})).url;
+        const result = await request('/api/billing/portal', 'POST', {});
+        if (typeof result?.url !== 'string' || !result.url) throw new Error('Stripe did not return a billing portal URL.');
+        location.href = result.url;
       } catch (error) {
         setStatus(error.message, true);
       }
@@ -241,7 +246,9 @@ async function start() {
       if (!button) continue;
       button.onclick = async () => {
         try {
-          location.href = (await request('/api/billing/checkout', 'POST', { plan: 'byok' })).url;
+          const result = await request('/api/billing/checkout', 'POST', { plan: 'byok' });
+          if (typeof result?.url !== 'string' || !result.url) throw new Error('Stripe did not return a checkout URL.');
+          location.href = result.url;
         } catch (error) {
           setStatus(error.message, true);
         }
@@ -254,7 +261,9 @@ async function start() {
         try {
           const amount = Number(document.getElementById('creditAmount')?.value);
           const currency = String(document.getElementById('creditCurrency')?.value || 'GBP').toLowerCase();
-          location.href = (await request('/api/billing/credits/checkout', 'POST', { amount, currency })).url;
+          const result = await request('/api/billing/credits/checkout', 'POST', { amount, currency });
+          if (typeof result?.url !== 'string' || !result.url) throw new Error('Stripe did not return a checkout URL.');
+          location.href = result.url;
         } catch (error) {
           setStatus(error.message, true);
         }
@@ -273,7 +282,9 @@ async function start() {
       if (!button) continue;
       button.onclick = async () => {
         try {
-          location.href = (await request('/api/billing/checkout', 'POST', { plan })).url;
+          const result = await request('/api/billing/checkout', 'POST', { plan });
+          if (typeof result?.url !== 'string' || !result.url) throw new Error('Stripe did not return a checkout URL.');
+          location.href = result.url;
         } catch (error) {
           setStatus(error.message, true);
         }

@@ -31,6 +31,8 @@ const {
   processStripeEvent,
   recordUsage,
   getBillingAccount,
+  convertManagedCreditAmountToMinorUnits,
+  createManagedCreditsCheckout,
   reserveManagedCredits,
   recordLlmUsage,
   releaseManagedReservation,
@@ -362,7 +364,34 @@ test('Stripe subscriptions are workspace scoped and webhook event processing is 
   assert.equal(db.prepare('SELECT units FROM usage_events WHERE id = ?').get(id).units, 4);
 });
 
-test('managed API credit ledger enforces reservations and records exact token telemetry', () => {
+test('managed API credit ledger enforces reservations and records exact token telemetry', async () => {
+  assert.equal(convertManagedCreditAmountToMinorUnits(25, 'GBP'), 2500);
+  assert.equal(convertManagedCreditAmountToMinorUnits(5.5, 'USD'), 550);
+  assert.throws(() => convertManagedCreditAmountToMinorUnits(4.99, 'EUR'), /Minimum credit purchase/);
+  assert.throws(() => convertManagedCreditAmountToMinorUnits(10001, 'USD'), /allowed maximum/);
+  assert.throws(() => convertManagedCreditAmountToMinorUnits(25.123, 'GBP'), /two decimal places/);
+  const checkoutRequests = [];
+  const checkoutUrl = await createManagedCreditsCheckout(
+    { id: 'org-checkout', name: 'Checkout workspace' },
+    { email: 'admin@example.test' },
+    convertManagedCreditAmountToMinorUnits(25, 'GBP'),
+    'GBP',
+    {
+      checkout: {
+        sessions: {
+          create: async (params) => {
+            checkoutRequests.push(params);
+            return { url: 'https://checkout.stripe.com/test-session' };
+          }
+        }
+      }
+    }
+  );
+  assert.equal(checkoutUrl, 'https://checkout.stripe.com/test-session');
+  assert.equal(checkoutRequests[0].line_items[0].price_data.unit_amount, 2500);
+  assert.equal(checkoutRequests[0].line_items[0].price_data.currency, 'gbp');
+  assert.equal(checkoutRequests[0].metadata.type, 'managed_credits');
+
   const account = getAuthenticatedSession();
   process.env.STRIPE_PRICE_BYOK = 'price_byok_test';
   const byokSubscription = {
@@ -391,7 +420,7 @@ test('managed API credit ledger enforces reservations and records exact token te
         mode: 'payment',
         payment_status: 'paid',
         metadata: {
-          purpose: 'managed_api_credits',
+          type: 'managed_credits',
           organization_id: account.organizationId,
           credits_micro_usd: '5000000'
         }
@@ -429,6 +458,21 @@ test('managed API credit ledger enforces reservations and records exact token te
   assert.equal(usage.charged_micro_usd, 585);
   assert.equal(getBillingAccount(account.organizationId).balance_micro_usd, 5_000_000 - recorded.charged_micro_usd);
   assert.equal(getBillingAccount(account.organizationId).reserved_micro_usd, 0);
+  const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  delete process.env.STRIPE_WEBHOOK_SECRET;
+  try {
+    await assert.rejects(
+      createManagedCreditsCheckout(
+        { id: account.organizationId, name: 'Test workspace' },
+        { email: 'admin@example.test' },
+        2500,
+        'gbp'
+      ),
+      /STRIPE_WEBHOOK_SECRET/
+    );
+  } finally {
+    process.env.STRIPE_WEBHOOK_SECRET = stripeWebhookSecret;
+  }
   assert.throws(
     () => reserveManagedCredits(account.organizationId, account.user.id, 'request-too-large', 5_000_000),
     /credit balance is too low/
@@ -488,6 +532,20 @@ test('HTTP API requires accounts, returns sign-in providers, and isolates projec
   const configured = await providersResponse.json();
   assert.equal(configured.google, true);
   assert.equal(configured.atlassian, true);
+  assert.equal(configured.stripe, true);
+  assert.equal(configured.stripeWebhookConfigured, true);
+  assert.equal(configured.prices.managedCredits, true);
+
+  const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  delete process.env.STRIPE_WEBHOOK_SECRET;
+  try {
+    const webhookUnconfiguredResponse = await fetch(`${baseUrl}/api/auth/providers`);
+    const webhookUnconfigured = await webhookUnconfiguredResponse.json();
+    assert.equal(webhookUnconfigured.stripeWebhookConfigured, false);
+    assert.equal(webhookUnconfigured.prices.managedCredits, false);
+  } finally {
+    process.env.STRIPE_WEBHOOK_SECRET = stripeWebhookSecret;
+  }
 
   const unauthenticated = await fetch(`${baseUrl}/api/projects`);
   assert.equal(unauthenticated.status, 401);

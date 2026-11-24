@@ -100,8 +100,16 @@ async function apiRequest(path, options = {}) {
 }
 
 async function openAuth(provider, flow) {
-  const url = `${await getApiBase()}/auth/${provider}/start${flow === 'connect' ? '?flow=connect' : ''}`;
-  window.open(url, '_blank', 'noopener');
+  const authWindow = window.open('about:blank', '_blank');
+  if (authWindow) authWindow.opener = null;
+  try {
+    const url = `${await getApiBase()}/auth/${provider}/start${flow === 'connect' ? '?flow=connect' : ''}`;
+    if (authWindow) authWindow.location.href = url;
+    else window.location.href = url;
+  } catch (error) {
+    authWindow?.close();
+    updateStatus(error.message);
+  }
 }
 
 async function loadAccount() {
@@ -109,10 +117,17 @@ async function loadAccount() {
     const providersResponse = await fetch(`${await getApiBase()}/api/auth/providers`, { credentials: 'include' });
     if (!providersResponse.ok) throw new Error('API is not available.');
     const configured = await providersResponse.json();
+    const prices = configured.prices || {};
+    for (const [buttonId, enabled] of [
+      ['teamPlanBtn', prices.team],
+      ['businessPlanBtn', prices.business],
+      ['paygPlanBtn', prices.payg],
+      ['billingPortalBtn', configured.stripeWebhookConfigured]
+    ]) {
+      document.getElementById(buttonId).disabled = !enabled;
+    }
     document.getElementById('googleLogin').onclick = () => configured.google && openAuth('google', 'login');
     document.getElementById('atlassianLogin').onclick = () => configured.atlassian && openAuth('atlassian', 'login');
-    document.getElementById('googleConnect').onclick = () => configured.google && !integrationProviders.has('google') && openAuth('google', 'connect');
-    document.getElementById('atlassianConnect').onclick = () => configured.atlassian && !integrationProviders.has('atlassian') && openAuth('atlassian', 'connect');
     document.getElementById('googleLogin').classList.toggle('disabled-link', !configured.google);
     document.getElementById('googleLogin').setAttribute('aria-disabled', String(!configured.google));
     document.getElementById('atlassianLogin').setAttribute('aria-disabled', String(!configured.atlassian));
@@ -130,15 +145,51 @@ async function loadAccount() {
     planName.textContent = data.subscription.plan;
     usageCount.textContent = data.usage.billable_units;
     integrationProviders = new Set(data.integrations.map((integration) => integration.provider));
-    integrationStatus.textContent = integrationProviders.size
-      ? `Connected services: ${[...integrationProviders].join(', ')}`
-      : 'No external workspaces are connected yet.';
-    document.getElementById('googleConnect').classList.toggle('disabled-link', !configured.google || integrationProviders.has('google'));
-    document.getElementById('atlassianConnect').classList.toggle('disabled-link', !configured.atlassian || integrationProviders.has('atlassian'));
-    document.getElementById('googleConnect').textContent = integrationProviders.has('google') ? 'Google Drive Connected' : 'Connect Google Drive';
-    document.getElementById('atlassianConnect').textContent = integrationProviders.has('atlassian') ? 'Jira / Confluence Connected' : 'Connect Jira / Confluence';
-    document.getElementById('googleConnect').setAttribute('aria-disabled', String(!configured.google || integrationProviders.has('google')));
-    document.getElementById('atlassianConnect').setAttribute('aria-disabled', String(!configured.atlassian || integrationProviders.has('atlassian')));
+    const missingIntegrations = [];
+    for (const [name, configuredFlag, provider] of [
+      ['Google Drive / Calendar', configured.google, 'google_drive'],
+      ['Jira / Confluence', configured.atlassian, 'atlassian'],
+      ['Slack', configured.slack, 'slack'],
+      ['Zoom', configured.zoom, 'zoom'],
+      ['Microsoft Teams', configured.microsoft, 'microsoft']
+    ]) {
+      if (!configuredFlag) missingIntegrations.push(`${name} requires provider credentials.`);
+      else if (!integrationProviders.has(provider)) missingIntegrations.push(`${name} is not connected.`);
+    }
+    integrationStatus.textContent = [
+      integrationProviders.size ? `Connected services: ${[...integrationProviders].join(', ')}` : '',
+      ...missingIntegrations
+    ].filter(Boolean).join('\n') || 'No external workspaces are connected yet.';
+    for (const [buttonId, available] of [
+      ['googleMeetingBtn', configured.google && integrationProviders.has('google_drive')],
+      ['teamsMeetingBtn', configured.microsoft && integrationProviders.has('microsoft')],
+      ['driveSearchBtn', configured.google && integrationProviders.has('google_drive')],
+      ['jiraRefreshBtn', configured.atlassian && integrationProviders.has('atlassian')],
+      ['jiraCreateBtn', configured.atlassian && integrationProviders.has('atlassian')],
+      ['confluenceCreateBtn', configured.atlassian && integrationProviders.has('atlassian')],
+      ['confluenceSearchBtn', configured.atlassian && integrationProviders.has('atlassian')],
+      ['zoomSearchBtn', configured.zoom && integrationProviders.has('zoom')],
+      ['teamsTranscriptSearchBtn', configured.microsoft && integrationProviders.has('microsoft')],
+      ['loadSlackMembersBtn', configured.slack && integrationProviders.has('slack')],
+      ['saveStandupScheduleBtn', configured.slack && integrationProviders.has('slack')]
+    ]) {
+      document.getElementById(buttonId).disabled = !available;
+    }
+    for (const [linkId, configKey, integrationProvider, authProvider, connectLabel, connectedLabel] of [
+      ['googleConnect', 'google', 'google_drive', 'google', 'Connect Google Drive', 'Google Drive Connected'],
+      ['atlassianConnect', 'atlassian', 'atlassian', 'atlassian', 'Connect Jira / Confluence', 'Jira / Confluence Connected'],
+      ['slackConnect', 'slack', 'slack', 'slack', 'Connect Slack', 'Slack Connected'],
+      ['zoomConnect', 'zoom', 'zoom', 'zoom', 'Connect Zoom', 'Zoom Connected'],
+      ['microsoftConnect', 'microsoft', 'microsoft', 'microsoft', 'Connect Microsoft Teams', 'Microsoft Teams Connected']
+    ]) {
+      const link = document.getElementById(linkId);
+      const connected = integrationProviders.has(integrationProvider);
+      const available = Boolean(configured[configKey]);
+      link.onclick = () => available && !connected && openAuth(authProvider, 'connect');
+      link.classList.toggle('disabled-link', !available || connected);
+      link.setAttribute('aria-disabled', String(!available || connected));
+      link.textContent = connected ? connectedLabel : connectLabel;
+    }
     await Promise.all([loadWorkspaces(), loadProjects()]);
     if (integrationProviders.has('atlassian')) await loadJiraSites();
   } catch (error) {
@@ -267,25 +318,39 @@ async function acceptInvitation() {
 }
 
 async function startCheckout(plan) {
+  const checkoutWindow = window.open('about:blank', '_blank');
+  if (checkoutWindow) checkoutWindow.opener = null;
   try {
     const { data } = await apiRequest('/api/billing/checkout', {
       method: 'POST',
       body: JSON.stringify({ plan })
     });
-    window.open(data.url, '_blank', 'noopener');
+    if (typeof data?.url !== 'string' || !data.url) {
+      throw new Error('Stripe did not return a checkout URL.');
+    }
+    if (checkoutWindow) checkoutWindow.location.href = data.url;
+    else window.location.href = data.url;
   } catch (error) {
+    checkoutWindow?.close();
     updateStatus(error.message);
   }
 }
 
 async function openBillingPortal() {
+  const portalWindow = window.open('about:blank', '_blank');
+  if (portalWindow) portalWindow.opener = null;
   try {
     const { data } = await apiRequest('/api/billing/portal', {
       method: 'POST',
       body: JSON.stringify({})
     });
-    window.open(data.url, '_blank', 'noopener');
+    if (typeof data?.url !== 'string' || !data.url) {
+      throw new Error('Stripe did not return a billing portal URL.');
+    }
+    if (portalWindow) portalWindow.location.href = data.url;
+    else window.location.href = data.url;
   } catch (error) {
+    portalWindow?.close();
     updateStatus(error.message);
   }
 }
@@ -666,7 +731,7 @@ async function generateBacklog() {
     });
     renderResult(data);
     if (data.generation_mode === 'template') {
-      updateStatus('Template output shown. Configure OPENAI_API_KEY to run the specialist agents.');
+      updateStatus('Template output shown. Configure an OpenAI API key or workload identity to run the specialist agents.');
     } else {
       updateStatus(`Project pack generated by ${data.agents_run.join(', ')} agents.`);
     }

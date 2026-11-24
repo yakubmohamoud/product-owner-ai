@@ -26,7 +26,9 @@ The first run creates a local SQLite database and a development encryption secre
 
 ### Optional: connect AI and external tools
 
-AI generation and provider sign-in/integrations need credentials from those providers. For local development, copy `.env.example` to `.env` and fill in only the credentials for the integrations you want to try. For example, set `OPENAI_API_KEY` for managed AI, or register OAuth applications using the local callback URLs listed under [OAuth provider setup](#oauth-provider-setup). Restart the server after changing `.env`. Never commit `.env` or share provider secrets.
+AI generation and provider sign-in/integrations need credentials from those providers. For local development, copy `.env.example` to `.env` and fill in only the credentials for the integrations you want to try. For example, set `OPENAI_API_KEY` for managed AI, or register OAuth applications using the local callback URLs listed under [OAuth provider setup](#oauth-provider-setup). On Render, OpenAI workload identity can be used instead of a long-lived API key by configuring `OPENAI_IDENTITY_PROVIDER_ID` and `OPENAI_SERVICE_ACCOUNT_ID`; Render supplies `OPENAI_IDENTITY_TOKEN_FILE` automatically. Render OIDC requires a Pro workspace or higher, and OpenAI must have a matching workload identity provider and service-account mapping. Restart the server after changing `.env`. Never commit `.env` or share provider secrets.
+
+Stripe checkout requires `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`. Configure a Stripe webhook at `https://<your-app-domain>/api/billing/webhook` for `checkout.session.completed`, `checkout.session.async_payment_succeeded`, and `customer.subscription.created`, `customer.subscription.updated`, and `customer.subscription.deleted`. Purchase buttons stay disabled if the webhook signing secret is missing so successful payments can be applied to workspace billing.
 
 ### Optional: load the Chrome extension
 

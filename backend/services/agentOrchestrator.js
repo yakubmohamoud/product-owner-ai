@@ -1,10 +1,9 @@
 const OpenAI = require('openai');
 const { buildFallbackArtifact } = require('./aiService');
 const { wrapAgentClient } = require('./llmTelemetry');
+const { createOpenAIClient, hasManagedOpenAIAuth } = require('./openaiWorkloadIdentity');
 
-const client = process.env.OPENAI_API_KEY
-  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  : null;
+const client = createOpenAIClient(OpenAI);
 
 const AGENT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const configuredMaxTokens = Number(process.env.MANAGED_MAX_OUTPUT_TOKENS || 4096);
@@ -84,14 +83,14 @@ function buildTemplateProjectPack(text) {
 
   return {
     ...fallback,
-    project_summary: 'Template output based on the supplied text. Configure an OpenAI API key for context-aware agent analysis.',
+    project_summary: 'Template output based on the supplied text. Configure an OpenAI API key or workload identity for context-aware agent analysis.',
     project_phase: 'Needs review',
     safe_artifacts: {
       features: [],
       pi_objectives: [],
       wsjf_candidates: []
     },
-    brd: 'Template output only. Configure an OpenAI API key to generate a business requirements document from the supplied context.',
+    brd: 'Template output only. Configure an OpenAI API key or workload identity to generate a business requirements document from the supplied context.',
     product_owner_documentation: 'Template output only. Product decisions, stakeholders, and open questions require AI analysis.',
     technical_notes: ['Template output only. Technical constraints and architecture require AI analysis.'],
     test_cases: fallback.test_scripts.map((test) => ({
@@ -103,7 +102,7 @@ function buildTemplateProjectPack(text) {
       milestones: []
     },
     risks: [],
-    head_of_product_update: 'Template output only. Configure an OpenAI API key to generate a project status update.',
+    head_of_product_update: 'Template output only. Configure an OpenAI API key or workload identity to generate a project status update.',
     generation_mode: 'template',
     agents_run: []
   };
@@ -349,6 +348,7 @@ module.exports = {
   buildTemplateProjectPack,
   createRequestAgentClient,
   wrapAgentClient,
+  hasManagedOpenAIAuth,
   answerProductQuestion,
   generateMeetingAgenda
 };

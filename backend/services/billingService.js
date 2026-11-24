@@ -13,6 +13,7 @@ function positiveIntegerFromEnv(name, fallback) {
 }
 
 const SUPPORTED_MANAGED_CREDIT_CURRENCIES = ['gbp', 'usd', 'eur'];
+const MAX_MANAGED_CREDIT_MINOR_UNITS = { gbp: 800_000, usd: 1_000_000, eur: 900_000 };
 
 function getManagedCreditExchangeRates() {
   const rates = {
@@ -57,6 +58,21 @@ function validateManagedCreditCurrency(currency) {
   return normalizedCurrency;
 }
 
+function convertManagedCreditAmountToMinorUnits(amount, currency) {
+  const normalizedCurrency = validateManagedCreditCurrency(currency);
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || !Number.isSafeInteger(amount * 100)) {
+    throw new Error('Enter a valid purchase amount with no more than two decimal places.');
+  }
+  const amountMinorUnits = Math.round(amount * 100);
+  if (amountMinorUnits < 500) {
+    throw new Error('Minimum credit purchase amount is $5.00 (or equivalent).');
+  }
+  if (amountMinorUnits > MAX_MANAGED_CREDIT_MINOR_UNITS[normalizedCurrency]) {
+    throw new Error('Managed API credit purchase exceeds the allowed maximum.');
+  }
+  return amountMinorUnits;
+}
+
 function getBillingAccount(organizationId) {
   db.prepare(`
     INSERT OR IGNORE INTO billing_accounts (organization_id, mode, updated_at)
@@ -70,6 +86,12 @@ function getStripe() {
     throw new Error('Billing is not configured. Set STRIPE_SECRET_KEY.');
   }
   return new Stripe(process.env.STRIPE_SECRET_KEY);
+}
+
+function requireStripeWebhookSecret() {
+  if (!process.env.STRIPE_WEBHOOK_SECRET) {
+    throw new Error('Stripe checkout is unavailable until STRIPE_WEBHOOK_SECRET is configured.');
+  }
 }
 
 function planPrice(plan) {
@@ -87,6 +109,7 @@ function planPrice(plan) {
 }
 
 async function createCheckoutSession(organization, user, plan) {
+  requireStripeWebhookSecret();
   const stripe = getStripe();
   const price = planPrice(plan);
   if (plan === 'byok') {
@@ -115,11 +138,15 @@ async function createCheckoutSession(organization, user, plan) {
   return session.url;
 }
 
-async function createManagedCreditsCheckout(organization, user, amountMinorUnits, currency = 'usd') {
-  const stripe = getStripe();
+async function createManagedCreditsCheckout(organization, user, amountMinorUnits, currency = 'usd', stripeClient) {
+  requireStripeWebhookSecret();
+  const stripe = stripeClient || getStripe();
   const normalizedCurrency = validateManagedCreditCurrency(currency);
   if (!Number.isInteger(amountMinorUnits) || amountMinorUnits < 500) {
     throw new Error('Minimum credit purchase amount is $5.00 (or equivalent).');
+  }
+  if (amountMinorUnits > MAX_MANAGED_CREDIT_MINOR_UNITS[normalizedCurrency]) {
+    throw new Error('Managed API credit purchase exceeds the allowed maximum.');
   }
 
   const session = await stripe.checkout.sessions.create({
@@ -154,6 +181,7 @@ async function createManagedCreditsCheckout(organization, user, amountMinorUnits
 }
 
 async function createBillingPortal(organization) {
+  requireStripeWebhookSecret();
   const stripe = getStripe();
   const account = getBillingAccount(organization.id);
   if (!account.stripe_customer_id) {
@@ -531,6 +559,7 @@ async function drainBillingOutbox() {
 module.exports = {
   getStripe,
   getManagedCreditConfig,
+  convertManagedCreditAmountToMinorUnits,
   createCheckoutSession,
   createManagedCreditsCheckout,
   createBillingPortal,
