@@ -144,7 +144,10 @@ async function createManagedCreditsCheckout(organization, user, amountMinorUnits
       organization_id: organization.id,
       type: 'managed_credits',
       amount_minor_units: String(amountMinorUnits),
-      currency: normalizedCurrency
+      currency: normalizedCurrency,
+      credits_micro_usd: String(Math.round(
+        amountMinorUnits * getManagedCreditExchangeRates()[normalizedCurrency] * 10000
+      ))
     }
   });
   return session.url;
@@ -164,73 +167,97 @@ async function createBillingPortal(organization) {
 }
 
 function processStripeEvent(event) {
-  const accountId = event.id;
-  const existing = db.prepare('SELECT id FROM stripe_processed_events WHERE id = ?').get(accountId);
-  if (existing) return false;
+  if (!event?.id || typeof event.id !== 'string') {
+    throw new Error('Stripe event is missing its ID.');
+  }
+  const timestamp = new Date().toISOString();
+  return db.transaction(() => {
+    const insertedEvent = db.prepare(`
+      INSERT OR IGNORE INTO stripe_events (event_id, processed_at) VALUES (?, ?)
+    `).run(event.id, timestamp);
+    if (!insertedEvent.changes) return false;
 
-  db.transaction(() => {
-    db.prepare('INSERT INTO stripe_processed_events (id, created_at) VALUES (?, ?)').run(
-      accountId,
-      new Date().toISOString()
-    );
-
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object;
-      const organizationId = session.client_reference_id || session.metadata?.organization_id;
-
+    const object = event.data?.object || {};
+    if (event.type === 'customer.subscription.created' ||
+      event.type === 'customer.subscription.updated' ||
+      event.type === 'customer.subscription.deleted') {
+      const existingAccount = db.prepare(`
+        SELECT organization_id FROM billing_accounts WHERE stripe_subscription_id = ?
+      `).get(object.id);
+      const organizationId = object.metadata?.organization_id || existingAccount?.organization_id;
       if (organizationId) {
+        const plan = object.metadata?.plan || 'free';
         getBillingAccount(organizationId);
-
-        if (session.customer) {
-          db.prepare(`
-            UPDATE billing_accounts
-            SET stripe_customer_id = ?, updated_at = ?
-            WHERE organization_id = ?
-          `).run(session.customer, new Date().toISOString(), organizationId);
-        }
-
-        if (session.subscription) {
-          db.prepare(`
-            UPDATE billing_accounts
-            SET stripe_subscription_id = ?, plan = ?, status = 'active', updated_at = ?
-            WHERE organization_id = ?
-          `).run(
-            session.subscription,
-            session.metadata?.plan || 'byok',
-            new Date().toISOString(),
-            organizationId
-          );
-        }
-
-        if (session.metadata?.type === 'managed_credits' || session.mode === 'payment') {
-          const amountTotal = session.amount_total || 0;
-          const currency = (session.currency || 'usd').toLowerCase();
-          const rates = getManagedCreditExchangeRates();
-          const rateToUsd = rates[currency] || 1;
-          const totalUsdMicro = Math.round(amountTotal * rateToUsd * 10000);
-
-          db.prepare(`
-            UPDATE billing_accounts
-            SET managed_credit_balance_micro_usd = managed_credit_balance_micro_usd + ?,
-                updated_at = ?
-            WHERE organization_id = ?
-          `).run(totalUsdMicro, new Date().toISOString(), organizationId);
-        }
-      }
-    } else if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
-      const subscription = event.data.object;
-      const account = db.prepare('SELECT organization_id FROM billing_accounts WHERE stripe_subscription_id = ?').get(subscription.id);
-      if (account) {
         db.prepare(`
           UPDATE billing_accounts
-          SET status = ?, updated_at = ?
+          SET stripe_customer_id = COALESCE(?, stripe_customer_id),
+              stripe_subscription_id = ?,
+              plan = ?,
+              status = ?,
+              mode = CASE WHEN ? = 'byok' THEN 'byok' ELSE mode END,
+              updated_at = ?
           WHERE organization_id = ?
-        `).run(subscription.status, new Date().toISOString(), account.organization_id);
+        `).run(object.customer || null, object.id, plan, object.status || 'active',
+          plan, timestamp, organizationId);
+        db.prepare(`
+          INSERT INTO subscriptions (
+            organization_id, stripe_customer_id, stripe_subscription_id, plan, status, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(organization_id) DO UPDATE SET
+            stripe_customer_id = excluded.stripe_customer_id,
+            stripe_subscription_id = excluded.stripe_subscription_id,
+            plan = excluded.plan,
+            status = excluded.status,
+            updated_at = excluded.updated_at
+        `).run(organizationId, object.customer || null, object.id, plan, object.status || 'active', timestamp);
+      }
+    } else if (event.type === 'checkout.session.completed' ||
+      event.type === 'checkout.session.async_payment_succeeded') {
+      const organizationId = object.client_reference_id || object.metadata?.organization_id;
+      if (organizationId) {
+        getBillingAccount(organizationId);
+        if (object.customer || object.subscription) {
+          db.prepare(`
+            UPDATE billing_accounts
+            SET stripe_customer_id = COALESCE(?, stripe_customer_id),
+                stripe_subscription_id = COALESCE(?, stripe_subscription_id),
+                plan = COALESCE(?, plan),
+                updated_at = ?
+            WHERE organization_id = ?
+          `).run(object.customer || null, object.subscription || null,
+            object.metadata?.plan || null, timestamp, organizationId);
+        }
+
+        const isCreditPurchase = object.metadata?.type === 'managed_credits' ||
+          object.metadata?.purpose === 'managed_api_credits' || object.mode === 'payment';
+        if (isCreditPurchase && object.payment_status !== 'unpaid') {
+          const currency = (object.currency || object.metadata?.currency || 'usd').toLowerCase();
+          const rates = getManagedCreditExchangeRates();
+          const amountMicroUsd = Number(object.metadata?.credits_micro_usd) ||
+            Math.round((object.amount_total || 0) * (rates[currency] || 1) * 10000);
+          if (!Number.isSafeInteger(amountMicroUsd) || amountMicroUsd <= 0) {
+            throw new Error('Stripe credit purchase has an invalid amount.');
+          }
+          const referenceId = object.id || event.id;
+          const insertedCredit = db.prepare(`
+            INSERT OR IGNORE INTO billing_ledger (
+              id, organization_id, entry_type, amount_micro_usd,
+              reference_id, description, created_at
+            ) VALUES (?, ?, 'credit', ?, ?, 'Managed API credit purchase', ?)
+          `).run(createId(), organizationId, amountMicroUsd, referenceId, timestamp);
+          if (insertedCredit.changes) {
+            db.prepare(`
+              UPDATE billing_accounts
+              SET balance_micro_usd = balance_micro_usd + ?, updated_at = ?
+              WHERE organization_id = ?
+            `).run(amountMicroUsd, timestamp, organizationId);
+          }
+        }
       }
     }
-  })();
 
-  return true;
+    return true;
+  })();
 }
 
 function recordUsage(organizationId, userId, eventType, units = 1, billable = true, sourceMode = 'byok') {
@@ -238,7 +265,7 @@ function recordUsage(organizationId, userId, eventType, units = 1, billable = tr
   const timestamp = new Date().toISOString();
   db.transaction(() => {
     db.prepare(`
-      INSERT INTO usage_events (id, organization_id, user_id, event_type, units, billable, source_mode, created_at)
+      INSERT INTO usage_events (id, organization_id, user_id, event_type, units, billable, source, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, organizationId, userId, eventType, units, billable ? 1 : 0, sourceMode, timestamp);
 
@@ -269,108 +296,149 @@ async function reportMeteredUsage(organizationId, usageEventId, units) {
 
 function getLlmRates() {
   return {
-    gpt4o: { input_micro_usd_per_1k: 2500, output_micro_usd_per_1k: 10000 },
-    gpt4o_mini: { input_micro_usd_per_1k: 150, output_micro_usd_per_1k: 600 }
+    input_micro_usd_per_million: positiveIntegerFromEnv('LLM_INPUT_COST_MICRO_USD_PER_MILLION', 150000),
+    output_micro_usd_per_million: positiveIntegerFromEnv('LLM_OUTPUT_COST_MICRO_USD_PER_MILLION', 600000)
   };
 }
 
-function estimateManagedReservation(model = 'gpt-4o', estimatedInputTokens = 2000, estimatedOutputTokens = 1000) {
-  const modelKey = model.includes('mini') ? 'gpt4o_mini' : 'gpt4o';
-  const rates = getLlmRates()[modelKey];
-  const costMicroUsd = Math.round(
-    (estimatedInputTokens / 1000) * rates.input_micro_usd_per_1k +
-    (estimatedOutputTokens / 1000) * rates.output_micro_usd_per_1k
+function estimateManagedReservation(estimatedCharacters = 8000, callCount = 1) {
+  if (!Number.isSafeInteger(estimatedCharacters) || estimatedCharacters < 0 ||
+    !Number.isSafeInteger(callCount) || callCount < 1) {
+    throw new Error('Managed credit reservation estimates must be non-negative integers.');
+  }
+  const rates = getLlmRates();
+  const estimatedInputTokens = Math.ceil(estimatedCharacters / 4) * callCount;
+  const estimatedOutputTokens = 1000 * callCount;
+  const costMicroUsd = Math.ceil(
+    (estimatedInputTokens * rates.input_micro_usd_per_million +
+      estimatedOutputTokens * rates.output_micro_usd_per_million) / 1_000_000
   );
-  const markupBps = getManagedCreditMarkupBps();
-  return Math.round(costMicroUsd * (1 + markupBps / 10000));
+  return Math.ceil(costMicroUsd * (1 + getManagedCreditMarkupBps() / 10000));
 }
 
-function reserveManagedCredits(organizationId, estimatedAmountMicroUsd) {
-  const account = getBillingAccount(organizationId);
-  const availableBalance = account.managed_credit_balance_micro_usd - account.managed_credit_reserved_micro_usd;
-
-  if (availableBalance < estimatedAmountMicroUsd) {
-    throw new Error('Insufficient managed credit balance. Please top up your account balance.');
+function reserveManagedCredits(organizationId, userId, requestId, estimatedAmountMicroUsd) {
+  if (typeof requestId !== 'string' || !requestId ||
+    !Number.isSafeInteger(estimatedAmountMicroUsd) || estimatedAmountMicroUsd < 0) {
+    throw new Error('Managed credit reservation details are invalid.');
   }
 
-  const reservationId = createId();
   const timestamp = new Date().toISOString();
-
-  db.transaction(() => {
-    db.prepare(`
-      UPDATE billing_accounts
-      SET managed_credit_reserved_micro_usd = managed_credit_reserved_micro_usd + ?,
-          updated_at = ?
-      WHERE organization_id = ?
-    `).run(estimatedAmountMicroUsd, timestamp, organizationId);
-
-    db.prepare(`
-      INSERT INTO managed_credit_reservations (id, organization_id, reserved_micro_usd, status, created_at, updated_at)
-      VALUES (?, ?, ?, 'reserved', ?, ?)
-    `).run(reservationId, organizationId, estimatedAmountMicroUsd, timestamp, timestamp);
-  })();
-
-  return reservationId;
-}
-
-function recordLlmUsage(organizationId, userId, reservationId, model, promptTokens, completionTokens) {
-  const modelKey = model.includes('mini') ? 'gpt4o_mini' : 'gpt4o';
-  const rates = getLlmRates()[modelKey];
-  const rawCostMicroUsd = Math.round(
-    (promptTokens / 1000) * rates.input_micro_usd_per_1k +
-    (completionTokens / 1000) * rates.output_micro_usd_per_1k
-  );
-  const markupBps = getManagedCreditMarkupBps();
-  const finalChargeMicroUsd = Math.round(rawCostMicroUsd * (1 + markupBps / 10000));
-  const timestamp = new Date().toISOString();
-
-  db.transaction(() => {
-    let reservedMicroUsd = 0;
-    if (reservationId) {
-      const res = db.prepare('SELECT reserved_micro_usd FROM managed_credit_reservations WHERE id = ?').get(reservationId);
-      if (res) {
-        reservedMicroUsd = res.reserved_micro_usd;
-        db.prepare(`
-          UPDATE managed_credit_reservations
-          SET status = 'fulfilled', updated_at = ?
-          WHERE id = ?
-        `).run(timestamp, reservationId);
+  return db.transaction(() => {
+    const account = getBillingAccount(organizationId);
+    const existing = db.prepare(`
+      SELECT organization_id, user_id, reserved_micro_usd, status
+      FROM managed_credit_reservations WHERE id = ?
+    `).get(requestId);
+    if (existing) {
+      if (existing.organization_id !== organizationId || existing.user_id !== userId ||
+        existing.reserved_micro_usd !== estimatedAmountMicroUsd || existing.status !== 'reserved') {
+        throw new Error('A conflicting managed credit reservation already exists.');
       }
+      return requestId;
     }
 
+    if (account.balance_micro_usd - account.reserved_micro_usd < estimatedAmountMicroUsd) {
+      throw new Error('Managed credit balance is too low. Please top up your account balance.');
+    }
     db.prepare(`
       UPDATE billing_accounts
-      SET managed_credit_balance_micro_usd = MAX(0, managed_credit_balance_micro_usd - ?),
-          managed_credit_reserved_micro_usd = MAX(0, managed_credit_reserved_micro_usd - ?),
-          updated_at = ?
+      SET reserved_micro_usd = reserved_micro_usd + ?, updated_at = ?
       WHERE organization_id = ?
-    `).run(finalChargeMicroUsd, reservedMicroUsd, timestamp, organizationId);
-
+    `).run(estimatedAmountMicroUsd, timestamp, organizationId);
     db.prepare(`
-      INSERT INTO llm_usage_logs (id, organization_id, user_id, model, prompt_tokens, completion_tokens, charge_micro_usd, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(createId(), organizationId, userId, model, promptTokens, completionTokens, finalChargeMicroUsd, timestamp);
+      INSERT INTO managed_credit_reservations (
+        id, organization_id, user_id, reserved_micro_usd, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'reserved', ?, ?)
+    `).run(requestId, organizationId, userId, estimatedAmountMicroUsd, timestamp, timestamp);
+    return requestId;
   })();
-
-  return finalChargeMicroUsd;
 }
 
-function releaseManagedReservation(organizationId, reservationId) {
-  if (!reservationId) return;
+function recordLlmUsage(organizationId, userId, requestId, billingMode, usage) {
+  const { provider, model, inputTokens, outputTokens, totalTokens } = usage || {};
+  if (typeof provider !== 'string' || typeof model !== 'string' ||
+    !Number.isSafeInteger(inputTokens) || inputTokens < 0 ||
+    !Number.isSafeInteger(outputTokens) || outputTokens < 0 ||
+    !Number.isSafeInteger(totalTokens) || totalTokens !== inputTokens + outputTokens) {
+    throw new Error('LLM usage telemetry must include exact non-negative token counts.');
+  }
+  if (!['byok', 'managed'].includes(billingMode)) {
+    throw new Error('LLM usage billing mode is invalid.');
+  }
+  const rates = getLlmRates();
+  const costMicroUsd = Math.round(
+    (inputTokens * rates.input_micro_usd_per_million +
+      outputTokens * rates.output_micro_usd_per_million) / 1_000_000
+  );
+  const chargedMicroUsd = billingMode === 'managed'
+    ? Math.ceil(costMicroUsd * (1 + getManagedCreditMarkupBps() / 10000))
+    : 0;
   const timestamp = new Date().toISOString();
+  const id = createId();
 
   db.transaction(() => {
-    const res = db.prepare('SELECT reserved_micro_usd, status FROM managed_credit_reservations WHERE id = ?').get(reservationId);
+    const account = getBillingAccount(organizationId);
+    if (billingMode === 'managed') {
+      const reservation = db.prepare(`
+        SELECT id FROM managed_credit_reservations
+        WHERE id = ? AND organization_id = ? AND user_id = ? AND status = 'reserved'
+      `).get(requestId, organizationId, userId);
+      if (!reservation) {
+        throw new Error('A valid managed credit reservation is required to record usage.');
+      }
+      if (account.balance_micro_usd < chargedMicroUsd) {
+        throw new Error('Managed credit balance is too low to cover this usage.');
+      }
+      db.prepare(`
+        UPDATE billing_accounts
+        SET balance_micro_usd = balance_micro_usd - ?, updated_at = ?
+        WHERE organization_id = ?
+      `).run(chargedMicroUsd, timestamp, organizationId);
+      if (chargedMicroUsd > 0) {
+        db.prepare(`
+          INSERT INTO billing_ledger (
+            id, organization_id, user_id, entry_type, amount_micro_usd,
+            reference_id, description, created_at
+          ) VALUES (?, ?, ?, 'debit', ?, ?, 'Managed LLM usage', ?)
+        `).run(id, organizationId, userId, chargedMicroUsd, id, timestamp);
+      }
+    }
+    db.prepare(`
+      INSERT INTO llm_usage (
+        id, organization_id, user_id, request_id, provider, model,
+        input_tokens, output_tokens, total_tokens,
+        input_rate_micro_usd_per_million, output_rate_micro_usd_per_million,
+        cost_micro_usd, charged_micro_usd, billing_mode, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, organizationId, userId, requestId, provider, model, inputTokens, outputTokens,
+      totalTokens, rates.input_micro_usd_per_million, rates.output_micro_usd_per_million,
+      costMicroUsd, chargedMicroUsd, billingMode, timestamp
+    );
+  })();
+
+  return { cost_micro_usd: costMicroUsd, charged_micro_usd: chargedMicroUsd };
+}
+
+function releaseManagedReservation(requestId, organizationId) {
+  if (!requestId) return;
+  const timestamp = new Date().toISOString();
+
+  return db.transaction(() => {
+    const res = db.prepare(`
+      SELECT reserved_micro_usd, status FROM managed_credit_reservations
+      WHERE id = ? AND organization_id = ?
+    `).get(requestId, organizationId);
     if (res && res.status === 'reserved') {
       db.prepare(`
         UPDATE managed_credit_reservations
         SET status = 'released', updated_at = ?
         WHERE id = ?
-      `).run(timestamp, reservationId);
+      `).run(timestamp, requestId);
 
       db.prepare(`
         UPDATE billing_accounts
-        SET managed_credit_reserved_micro_usd = MAX(0, managed_credit_reserved_micro_usd - ?),
+        SET reserved_micro_usd = MAX(0, reserved_micro_usd - ?),
             updated_at = ?
         WHERE organization_id = ?
       `).run(res.reserved_micro_usd, timestamp, organizationId);
@@ -387,7 +455,7 @@ function cleanupExpiredReservations() {
   `).all(oneHourAgo);
 
   for (const item of expired) {
-    releaseManagedReservation(item.organization_id, item.id);
+    releaseManagedReservation(item.id, item.organization_id);
   }
 }
 
@@ -395,21 +463,26 @@ function setBillingMode(organizationId, mode) {
   if (!['byok', 'managed'].includes(mode)) {
     throw new Error("Billing mode must be 'byok' or 'managed'.");
   }
+  getBillingAccount(organizationId);
   db.prepare(`
     UPDATE billing_accounts
     SET mode = ?, updated_at = ?
     WHERE organization_id = ?
   `).run(mode, new Date().toISOString(), organizationId);
+  return getBillingAccount(organizationId);
 }
 
-function getLlmUsage(organizationId) {
+function getLlmUsage(organizationId, limit = 100) {
+  const normalizedLimit = Number.isSafeInteger(limit) ? Math.min(1000, Math.max(1, limit)) : 100;
   return db.prepare(`
-    SELECT SUM(prompt_tokens) as total_prompt_tokens,
-           SUM(completion_tokens) as total_completion_tokens,
-           SUM(charge_micro_usd) as total_charge_micro_usd
-    FROM llm_usage_logs
+    SELECT id, organization_id, user_id, request_id, provider, model,
+           input_tokens, output_tokens, total_tokens, cost_micro_usd,
+           charged_micro_usd, billing_mode, created_at
+    FROM llm_usage
     WHERE organization_id = ?
-  `).get(organizationId);
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(organizationId, normalizedLimit);
 }
 
 let draining = false;

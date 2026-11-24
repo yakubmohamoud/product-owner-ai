@@ -170,6 +170,7 @@ db.exec(`
     attempts INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
     next_attempt_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS standup_schedules (
@@ -222,6 +223,10 @@ db.exec(`
     mode TEXT NOT NULL DEFAULT 'managed' CHECK (mode IN ('byok', 'managed')),
     balance_micro_usd INTEGER NOT NULL DEFAULT 0 CHECK (balance_micro_usd >= 0),
     reserved_micro_usd INTEGER NOT NULL DEFAULT 0 CHECK (reserved_micro_usd >= 0),
+    stripe_customer_id TEXT UNIQUE,
+    stripe_subscription_id TEXT UNIQUE,
+    plan TEXT NOT NULL DEFAULT 'free',
+    status TEXT NOT NULL DEFAULT 'active',
     updated_at TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS billing_ledger (
@@ -242,6 +247,17 @@ db.exec(`
     remaining_micro_usd INTEGER NOT NULL CHECK (remaining_micro_usd >= 0),
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS managed_credit_reservations (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    reserved_micro_usd INTEGER NOT NULL CHECK (reserved_micro_usd >= 0),
+    status TEXT NOT NULL CHECK (status IN ('reserved', 'released')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS managed_credit_reservations_expiry
+    ON managed_credit_reservations(status, created_at);
   CREATE TABLE IF NOT EXISTS rate_limit_buckets (
     bucket_key TEXT PRIMARY KEY,
     window_start INTEGER NOT NULL,
@@ -265,6 +281,26 @@ db.exec(`
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS llm_usage_org_date ON llm_usage(organization_id, created_at);
+`);
+
+function ensureColumn(table, name, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some((column) => column.name === name)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+  }
+}
+
+ensureColumn('billing_accounts', 'stripe_customer_id', 'TEXT');
+ensureColumn('billing_accounts', 'stripe_subscription_id', 'TEXT');
+ensureColumn('billing_accounts', 'plan', "TEXT NOT NULL DEFAULT 'free'");
+ensureColumn('billing_accounts', 'status', "TEXT NOT NULL DEFAULT 'active'");
+ensureColumn('billing_outbox', 'created_at', "TEXT NOT NULL DEFAULT ''");
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS billing_accounts_stripe_customer
+    ON billing_accounts(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS billing_accounts_stripe_subscription
+    ON billing_accounts(stripe_subscription_id) WHERE stripe_subscription_id IS NOT NULL;
+  UPDATE billing_outbox SET created_at = updated_at WHERE created_at = '';
 `);
 
 const userColumns = db.prepare('PRAGMA table_info(users)').all();
