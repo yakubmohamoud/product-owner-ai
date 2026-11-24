@@ -86,13 +86,15 @@ async function apiRequest(path, options = {}) {
   const contentType = response.headers.get('content-type') || '';
   const data = contentType.includes('application/json') ? await response.json() : null;
   if (!response.ok) {
+    const requestId = data?.request_id || response.headers.get('x-request-id');
     if (response.status === 401) {
       signedInActions.classList.add('hidden');
       signInActions.classList.remove('hidden');
       projectPanel.classList.add('hidden');
       authStatus.textContent = data?.error || 'Sign in to use project features.';
     }
-    throw new Error(data?.error || `Request failed (${response.status}).`);
+    const message = data?.error || `Request failed (${response.status}).`;
+    throw new Error(requestId ? `${message} (Request ID: ${requestId})` : message);
   }
   return { response, data };
 }

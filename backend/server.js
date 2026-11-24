@@ -246,11 +246,19 @@ function enforceUsage(req, res, next) {
       .reduce((length, value) => length + value.length, 0);
     let textLength = requestTextLength;
     if (typeof req.body?.project_id === 'string') {
-      const projectContext = projectService.assembleProjectContext(
-        req.auth.organization_id,
-        req.body.project_id,
-        typeof req.body?.text === 'string' ? req.body.text : ''
-      );
+      let projectContext;
+      try {
+        projectContext = projectService.assembleProjectContext(
+          req.auth.organization_id,
+          req.body.project_id,
+          typeof req.body?.text === 'string' ? req.body.text : ''
+        );
+      } catch (error) {
+        if (error.code === 'PROJECT_CONTEXT_TOO_LARGE') {
+          return res.status(400).json({ error: error.message });
+        }
+        return next(error);
+      }
       if (!projectContext) return res.status(404).json({ error: 'Project not found in this workspace.' });
       textLength = Math.max(textLength, projectContext.context.length);
     }
@@ -1148,7 +1156,8 @@ app.post('/api/generate', requireAuthentication, requireCsrf, generationRateLimi
       user_id: req.auth.user_id,
       organization_id: req.auth.organization_id
     });
-    res.status(500).json({ error: error.message || 'Failed to generate project pack.' });
+    const status = error.code === 'PROJECT_CONTEXT_TOO_LARGE' ? 400 : 500;
+    res.status(status).json({ error: error.message || 'Failed to generate project pack.' });
   }
 });
 

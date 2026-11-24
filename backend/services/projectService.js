@@ -114,7 +114,9 @@ function assembleProjectContext(organizationId, projectId, additionalContext = '
   ].filter(Boolean);
   const context = sections.join('\n\n---\n\n');
   if (context.length > maximumContextCharacters) {
-    throw new Error('Combined project context exceeds 250,000 characters. Remove older or oversized documents.');
+    const error = new Error('Combined project context exceeds 250,000 characters. Remove older or oversized documents.');
+    error.code = 'PROJECT_CONTEXT_TOO_LARGE';
+    throw error;
   }
   return { project, context };
 }

@@ -445,6 +445,40 @@ test('managed API credit ledger enforces reservations and records exact token te
   assert.equal(byokUsage.charged_micro_usd, 0);
 });
 
+test('generation reports oversized saved project context as a bad request', async () => {
+  const generationServer = app.listen(0);
+  await new Promise((resolve) => generationServer.once('listening', resolve));
+  const baseUrl = `http://127.0.0.1:${generationServer.address().port}`;
+  const owner = getAuthenticatedSession();
+  const project = projects.createProject(
+    owner.organizationId,
+    owner.user.id,
+    'Oversized project',
+    'x'.repeat(250001)
+  );
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  setBillingMode(owner.organizationId, 'managed');
+  process.env.OPENAI_API_KEY = 'test-openai-key';
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${owner.token}`,
+        'X-CSRF-Token': owner.csrf,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ project_id: project.id, text: '' })
+    });
+  } finally {
+    if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalOpenAiKey;
+    await new Promise((resolve) => generationServer.close(resolve));
+  }
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /Combined project context exceeds 250,000 characters/);
+});
+
 test('HTTP API requires accounts, returns sign-in providers, and isolates projects by workspace', async () => {
   server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
