@@ -120,10 +120,20 @@ async function loadOrganizationMembers(account) {
 
 async function start() {
   const params = new URLSearchParams(location.search);
-  if (params.has('auth_error')) setStatus(params.get('auth_error'), true);
-  else if (params.has('signed_in')) setStatus('Signed in successfully.');
-  else if (params.has('connected')) setStatus('Integration connected.');
-  else if (params.has('billing')) setStatus(`Billing ${params.get('billing')}.`);
+  const returnMessage = params.has('auth_error')
+    ? params.get('auth_error')
+    : params.has('signed_in')
+      ? 'Signed in successfully.'
+      : params.has('connected')
+        ? 'Integration connected.'
+        : params.get('credits_purchased') === 'true'
+          ? 'Payment complete. Your managed credit balance is shown below. If it has not updated yet, wait briefly and refresh while Stripe confirms the webhook.'
+          : params.get('billing') === 'success'
+            ? 'Payment complete. Your subscription status may take a moment to update.'
+            : params.get('billing') === 'cancelled'
+              ? 'Checkout cancelled. No payment was completed.'
+              : '';
+  if (returnMessage) setStatus(returnMessage, params.has('auth_error'));
 
   attachLocalAuthHandlers();
 
@@ -167,7 +177,7 @@ async function start() {
       document.getElementById('billingModeSelect').value = billingSummary.billing.mode;
     }
     await loadOrganizationMembers(account);
-    setStatus('Your workspace is ready.');
+    setStatus(returnMessage || 'Your workspace is ready.');
 
     document.getElementById('googleDrive')?.addEventListener('click', () => {
       location.href = '/auth/google/start?flow=connect';

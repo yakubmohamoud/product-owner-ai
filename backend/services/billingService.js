@@ -128,8 +128,8 @@ async function createCheckoutSession(organization, user, plan, stripeClient) {
     customer_email: user.email,
     client_reference_id: organization.id,
     line_items: [{ price, quantity: 1 }],
-    success_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/account.html?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/account.html`,
+    success_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/?billing=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/?billing=cancelled`,
     metadata: {
       organization_id: organization.id,
       plan
@@ -165,8 +165,8 @@ async function createManagedCreditsCheckout(organization, user, amountMinorUnits
       },
       quantity: 1
     }],
-    success_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/account.html?credits_purchased=true`,
-    cancel_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/account.html`,
+    success_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/?credits_purchased=true`,
+    cancel_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/?billing=cancelled`,
     metadata: {
       organization_id: organization.id,
       type: 'managed_credits',
@@ -180,16 +180,16 @@ async function createManagedCreditsCheckout(organization, user, amountMinorUnits
   return session.url;
 }
 
-async function createBillingPortal(organization) {
+async function createBillingPortal(organization, stripeClient) {
   requireStripeWebhookSecret();
-  const stripe = getStripe();
+  const stripe = stripeClient || getStripe();
   const account = getBillingAccount(organization.id);
   if (!account.stripe_customer_id) {
     throw new Error('No active Stripe customer found for this organization.');
   }
   const session = await stripe.billingPortal.sessions.create({
     customer: account.stripe_customer_id,
-    return_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/account.html`
+    return_url: `${process.env.PUBLIC_BASE_URL || 'http://localhost:3000'}/`
   });
   return session.url;
 }

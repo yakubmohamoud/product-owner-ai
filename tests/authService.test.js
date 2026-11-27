@@ -33,6 +33,7 @@ const {
   getBillingAccount,
   convertManagedCreditAmountToMinorUnits,
   createCheckoutSession,
+  createBillingPortal,
   createManagedCreditsCheckout,
   reserveManagedCredits,
   recordLlmUsage,
@@ -394,6 +395,8 @@ test('managed API credit ledger enforces reservations and records exact token te
   assert.equal(checkoutRequests[0].line_items[0].price_data.unit_amount, 2500);
   assert.equal(checkoutRequests[0].line_items[0].price_data.currency, 'gbp');
   assert.equal(checkoutRequests[0].metadata.type, 'managed_credits');
+  assert.equal(checkoutRequests[0].success_url, 'https://test.example/?credits_purchased=true');
+  assert.equal(checkoutRequests[0].cancel_url, 'https://test.example/?billing=cancelled');
 
   const account = getAuthenticatedSession();
   process.env.STRIPE_PRICE_BYOK = 'price_byok_test';
@@ -516,10 +519,35 @@ test('subscription checkout uses the supported Stripe payment method parameter',
     assert.equal(checkoutUrl, 'https://checkout.stripe.com/test-subscription-session');
     assert.deepEqual(checkoutRequests[0].allowed_payment_method_types, ['card']);
     assert.equal('payment_method_types' in checkoutRequests[0], false);
+    assert.equal(checkoutRequests[0].success_url,
+      'https://test.example/?billing=success&session_id={CHECKOUT_SESSION_ID}');
+    assert.equal(checkoutRequests[0].cancel_url, 'https://test.example/?billing=cancelled');
   } finally {
     if (previousPrice === undefined) delete process.env.STRIPE_PRICE_TEAM;
     else process.env.STRIPE_PRICE_TEAM = previousPrice;
   }
+});
+
+test('billing portal returns users to the existing workspace page', async () => {
+  const account = getAuthenticatedSession();
+  db.prepare('UPDATE billing_accounts SET stripe_customer_id = ? WHERE organization_id = ?')
+    .run('cus_portal_test', account.organizationId);
+  let portalRequest;
+  const portalUrl = await createBillingPortal(
+    { id: account.organizationId },
+    {
+      billingPortal: {
+        sessions: {
+          create: async (params) => {
+            portalRequest = params;
+            return { url: 'https://billing.stripe.com/test-portal' };
+          }
+        }
+      }
+    }
+  );
+  assert.equal(portalUrl, 'https://billing.stripe.com/test-portal');
+  assert.equal(portalRequest.return_url, 'https://test.example/');
 });
 
 test('generation reports oversized saved project context as a bad request', async () => {
@@ -568,6 +596,16 @@ test('HTTP API requires accounts, returns sign-in providers, and isolates projec
   assert.equal(configured.stripe, true);
   assert.equal(configured.stripeWebhookConfigured, true);
   assert.equal(configured.prices.managedCredits, true);
+
+  const legacyAccountRedirect = await fetch(
+    `${baseUrl}/account.html?credits_purchased=true&session_id=cs_example`,
+    { redirect: 'manual' }
+  );
+  assert.equal(legacyAccountRedirect.status, 302);
+  assert.equal(
+    legacyAccountRedirect.headers.get('location'),
+    '/?credits_purchased=true&session_id=cs_example'
+  );
 
   const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   delete process.env.STRIPE_WEBHOOK_SECRET;

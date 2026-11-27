@@ -205,6 +205,11 @@ app.use(express.static(path.join(__dirname, '..', 'public'), { index: false, fal
 app.get('/', (_req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
+app.get('/account.html', (req, res) => {
+  const target = new URL(req.originalUrl, publicBaseUrl());
+  target.pathname = '/';
+  res.redirect(302, `${target.pathname}${target.search}`);
+});
 
 function getMonthlyUsage(organizationId) {
   return db.prepare(`
