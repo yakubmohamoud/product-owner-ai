@@ -32,6 +32,7 @@ const {
   recordUsage,
   getBillingAccount,
   convertManagedCreditAmountToMinorUnits,
+  createCheckoutSession,
   createManagedCreditsCheckout,
   reserveManagedCredits,
   recordLlmUsage,
@@ -388,6 +389,8 @@ test('managed API credit ledger enforces reservations and records exact token te
     }
   );
   assert.equal(checkoutUrl, 'https://checkout.stripe.com/test-session');
+  assert.deepEqual(checkoutRequests[0].allowed_payment_method_types, ['card']);
+  assert.equal('payment_method_types' in checkoutRequests[0], false);
   assert.equal(checkoutRequests[0].line_items[0].price_data.unit_amount, 2500);
   assert.equal(checkoutRequests[0].line_items[0].price_data.currency, 'gbp');
   assert.equal(checkoutRequests[0].metadata.type, 'managed_credits');
@@ -446,6 +449,7 @@ test('managed API credit ledger enforces reservations and records exact token te
     outputTokens: 500,
     totalTokens: 1500
   });
+
   releaseManagedReservation(requestId, account.organizationId);
 
   const usage = getLlmUsage(account.organizationId, 1)[0];
@@ -487,6 +491,35 @@ test('managed API credit ledger enforces reservations and records exact token te
     totalTokens: 75
   });
   assert.equal(byokUsage.charged_micro_usd, 0);
+});
+
+test('subscription checkout uses the supported Stripe payment method parameter', async () => {
+  const previousPrice = process.env.STRIPE_PRICE_TEAM;
+  process.env.STRIPE_PRICE_TEAM = 'price_team_test';
+  const checkoutRequests = [];
+  try {
+    const checkoutUrl = await createCheckoutSession(
+      { id: 'org-subscription-checkout', name: 'Subscription workspace' },
+      { email: 'admin@example.test' },
+      'team',
+      {
+        checkout: {
+          sessions: {
+            create: async (params) => {
+              checkoutRequests.push(params);
+              return { url: 'https://checkout.stripe.com/test-subscription-session' };
+            }
+          }
+        }
+      }
+    );
+    assert.equal(checkoutUrl, 'https://checkout.stripe.com/test-subscription-session');
+    assert.deepEqual(checkoutRequests[0].allowed_payment_method_types, ['card']);
+    assert.equal('payment_method_types' in checkoutRequests[0], false);
+  } finally {
+    if (previousPrice === undefined) delete process.env.STRIPE_PRICE_TEAM;
+    else process.env.STRIPE_PRICE_TEAM = previousPrice;
+  }
 });
 
 test('generation reports oversized saved project context as a bad request', async () => {

@@ -108,9 +108,9 @@ function planPrice(plan) {
   return price;
 }
 
-async function createCheckoutSession(organization, user, plan) {
+async function createCheckoutSession(organization, user, plan, stripeClient) {
   requireStripeWebhookSecret();
-  const stripe = getStripe();
+  const stripe = stripeClient || getStripe();
   const price = planPrice(plan);
   if (plan === 'byok') {
     const configuredPrice = await stripe.prices.retrieve(price);
@@ -124,7 +124,7 @@ async function createCheckoutSession(organization, user, plan) {
 
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
-    payment_method_types: ['card'],
+    allowed_payment_method_types: ['card'],
     customer_email: user.email,
     client_reference_id: organization.id,
     line_items: [{ price, quantity: 1 }],
@@ -151,7 +151,7 @@ async function createManagedCreditsCheckout(organization, user, amountMinorUnits
 
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
-    payment_method_types: ['card'],
+    allowed_payment_method_types: ['card'],
     customer_email: user.email,
     client_reference_id: organization.id,
     line_items: [{
