@@ -99,22 +99,10 @@ async function apiRequest(path, options = {}) {
   return { response, data };
 }
 
-async function openAuth(provider, flow) {
-  const authWindow = window.open('about:blank', '_blank');
-  if (authWindow) authWindow.opener = null;
-  try {
-    const url = `${await getApiBase()}/auth/${provider}/start${flow === 'connect' ? '?flow=connect' : ''}`;
-    if (authWindow) authWindow.location.href = url;
-    else window.location.href = url;
-  } catch (error) {
-    authWindow?.close();
-    updateStatus(error.message);
-  }
-}
-
 async function loadAccount() {
   try {
-    const providersResponse = await fetch(`${await getApiBase()}/api/auth/providers`, { credentials: 'include' });
+    const apiBaseUrl = await getApiBase();
+    const providersResponse = await fetch(`${apiBaseUrl}/api/auth/providers`, { credentials: 'include' });
     if (!providersResponse.ok) throw new Error('API is not available.');
     const configured = await providersResponse.json();
     const prices = configured.prices || {};
@@ -126,8 +114,14 @@ async function loadAccount() {
     ]) {
       document.getElementById(buttonId).disabled = !enabled;
     }
-    document.getElementById('googleLogin').onclick = () => configured.google && openAuth('google', 'login');
-    document.getElementById('atlassianLogin').onclick = () => configured.atlassian && openAuth('atlassian', 'login');
+    for (const [linkId, provider, available] of [
+      ['googleLogin', 'google', configured.google],
+      ['atlassianLogin', 'atlassian', configured.atlassian]
+    ]) {
+      const link = document.getElementById(linkId);
+      if (available) link.href = `${apiBaseUrl}/auth/${provider}/start`;
+      else link.removeAttribute('href');
+    }
     document.getElementById('googleLogin').classList.toggle('disabled-link', !configured.google);
     document.getElementById('googleLogin').setAttribute('aria-disabled', String(!configured.google));
     document.getElementById('atlassianLogin').setAttribute('aria-disabled', String(!configured.atlassian));
@@ -185,7 +179,11 @@ async function loadAccount() {
       const link = document.getElementById(linkId);
       const connected = integrationProviders.has(integrationProvider);
       const available = Boolean(configured[configKey]);
-      link.onclick = () => available && !connected && openAuth(authProvider, 'connect');
+      if (available && !connected) {
+        link.href = `${apiBaseUrl}/auth/${authProvider}/start?flow=connect`;
+      } else {
+        link.removeAttribute('href');
+      }
       link.classList.toggle('disabled-link', !available || connected);
       link.setAttribute('aria-disabled', String(!available || connected));
       link.textContent = connected ? connectedLabel : connectLabel;
